@@ -1,0 +1,32 @@
+{
+  "name": "pitchforge-backend",
+  "version": "1.0.0",
+  "description": "PitchForge Backend API",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "nodemon --exec ts-node src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "type-check": "tsc --noEmit"
+  },
+  "keywords": ["fastify", "api", "audio", "ml"],
+  "author": "PitchForge Team",
+  "license": "MIT",
+  "dependencies": {
+    "fastify": "^4.24.3",
+    "@fastify/cors": "^8.4.1",
+    "@fastify/multipart": "^8.3.0",
+    "pg": "^8.13.1",
+    "uuid": "^11.0.5",
+    "axios": "^1.7.9",
+    "form-data": "^4.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.9.0",
+    "@types/pg": "^8.11.10",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.2.2",
+    "nodemon": "^3.0.1",
+    "ts-node": "^10.9.1"
+  }
+}
