@@ -306,6 +306,17 @@ class TrainingApiService {
     const data = await response.json();
     return data.sessions || [];
   }
+
+  async getAnalytics(): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/api/analytics`);
+    
+    if (!response.ok) {
+      throw new Error('Failed to fetch analytics data');
+    }
+
+    const data = await response.json();
+    return data.analytics;
+  }
 }
 
 export const trainingApiService = new TrainingApiService();

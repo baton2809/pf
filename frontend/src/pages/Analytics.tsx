@@ -1,31 +1,91 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, BarChart, Bar, LabelList } from 'recharts';
+import { trainingApiService } from '../services/trainingApi';
+
+interface AnalyticsData {
+  totalSessions: number;
+  averageScore: number;
+  bestScore: number;
+  monthlyGrowth: number;
+  totalTime: number;
+  todayTime: number;
+  streakDays: number;
+  completedRecommendations: number;
+  dynamicsData: Array<{ date: string; value: number }>;
+  averageMetrics: Array<{ name: string; current: number; previous: number }>;
+}
 
 export const Analytics: React.FC = () => {
-  // mock data - should be loaded from API
-  const dynamicsData: { date: string; value: number }[] = [];
-  const averageData: { name: string; current: number; previous: number }[] = [];
+  const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadAnalytics();
+  }, []);
+
+  const loadAnalytics = async () => {
+    try {
+      setLoading(true);
+      const data = await trainingApiService.getAnalytics();
+      setAnalytics(data);
+      setError(null);
+    } catch (error: any) {
+      console.error('Failed to load analytics:', error);
+      setError('Ошибка загрузки аналитики');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const getBestScore = () => {
-    if (dynamicsData.length === 0) return 0;
-    return Math.max(...dynamicsData.map(item => item.value));
+    return analytics?.bestScore || 0;
   };
 
   const getMonthlyGrowth = () => {
-    if (dynamicsData.length === 0) return "0.0";
-    const firstValue = dynamicsData[0].value;
-    const lastValue = dynamicsData[dynamicsData.length - 1].value;
-    const growth = lastValue - firstValue;
+    if (!analytics) return "0.0";
+    const growth = analytics.monthlyGrowth;
     return growth >= 0 ? `+${growth.toFixed(1)}` : growth.toFixed(1);
   };
 
   const getCompletedRecommendations = () => {
-    return 0; // Real data should come from API
+    return analytics?.completedRecommendations || 0;
   };
 
   const getTodayPracticeTime = () => {
-    return "0м"; // Real data should come from API
+    if (!analytics) return "0м";
+    return analytics.todayTime > 0 ? `${analytics.todayTime}м` : "0м";
   };
+
+  if (loading) {
+    return (
+      <div style={{ textAlign: 'center', padding: '50px' }}>
+        <p>Загрузка аналитики...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{ textAlign: 'center', padding: '50px' }}>
+        <p style={{ color: '#dc3545' }}>{error}</p>
+        <button onClick={loadAnalytics} style={{
+          padding: '8px 16px',
+          backgroundColor: '#1a73e8',
+          color: 'white',
+          border: 'none',
+          borderRadius: '4px',
+          cursor: 'pointer',
+          marginTop: '16px'
+        }}>
+          Повторить
+        </button>
+      </div>
+    );
+  }
+
+  const dynamicsData = analytics?.dynamicsData || [];
+  const averageData = analytics?.averageMetrics || [];
 
   return (
     <div>
@@ -54,13 +114,13 @@ export const Analytics: React.FC = () => {
             }}>
               {/* всего сессий */}
               <div className="stat-card stat-card-compact accent-blue">
-                <div className="stat-card-value">0</div>
+                <div className="stat-card-value">{analytics?.totalSessions || 0}</div>
                 <div className="stat-card-label">Всего сессий</div>
               </div>
 
               {/* средний балл */}
               <div className="stat-card stat-card-compact accent-green">
-                <div className="stat-card-value">0.0</div>
+                <div className="stat-card-value">{analytics?.averageScore?.toFixed(1) || '0.0'}</div>
                 <div className="stat-card-label">Средний балл</div>
               </div>
 
@@ -159,13 +219,13 @@ export const Analytics: React.FC = () => {
 
               {/* общее время */}
               <div className="stat-card stat-card-compact accent-orange">
-                <div className="stat-card-value">0м</div>
+                <div className="stat-card-value">{analytics?.totalTime || 0}м</div>
                 <div className="stat-card-label">Общее время</div>
               </div>
 
               {/* дней подряд */}
               <div className="stat-card stat-card-compact accent-purple">
-                <div className="stat-card-value">0</div>
+                <div className="stat-card-value">{analytics?.streakDays || 0}</div>
                 <div className="stat-card-label">Дней подряд</div>
               </div>
 

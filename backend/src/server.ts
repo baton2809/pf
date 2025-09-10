@@ -8,6 +8,7 @@ import healthRoutes from './routes/health';
 import audioRoutes from './routes/audio';
 import authRoutes from './routes/auth';
 import trainingRoutes from './routes/training';
+import { analyticsRoutes } from './routes/analytics';
 import { v4 as uuidv4 } from 'uuid';
 
 // create fastify instance
@@ -86,6 +87,7 @@ async function start() {
     await fastify.register(authRoutes);
     await fastify.register(audioRoutes);
     await fastify.register(trainingRoutes);
+    await fastify.register(analyticsRoutes, { prefix: '/api' });
 
     // start server
     await fastify.listen({ 
