@@ -3,9 +3,9 @@
 set -e
 
 ROOT_ENV=".env"
-EXTERNAL_ML_URL="http://89.169.190.223:4000"
+EXTERNAL_ML_URL="http://disabled-external-service:4000"
 LOCAL_ML_URL="http://pitch-ml-service:5000"
-REPO_URL="https://github.com/your-username/pitch-ml-service.git"
+REPO_URL="https://github.com/nonexistent/pitch-ml-service.git"
 SERVICE_DIR="pitch-ml-service"
 
 echo "Setting up ML service (external or local)..."

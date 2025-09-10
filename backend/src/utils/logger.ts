@@ -40,25 +40,29 @@ export class Logger {
         name: error.name
       } : error;
       
-      console.error(this.formatMessage('ERROR', context, message, errorData));
+      const logMessage = this.formatMessage('ERROR', context, message, errorData) + '\n';
+      process.stderr.write(logMessage);
     }
   }
 
   warn(context: string, message: string, data?: any): void {
     if (this.logLevel >= LogLevel.WARN) {
-      console.warn(this.formatMessage('WARN', context, message, data));
+      const logMessage = this.formatMessage('WARN', context, message, data) + '\n';
+      process.stdout.write(logMessage);
     }
   }
 
   info(context: string, message: string, data?: any): void {
     if (this.logLevel >= LogLevel.INFO) {
-      console.log(this.formatMessage('INFO', context, message, data));
+      const logMessage = this.formatMessage('INFO', context, message, data) + '\n';
+      process.stdout.write(logMessage);
     }
   }
 
   debug(context: string, message: string, data?: any): void {
     if (this.logLevel >= LogLevel.DEBUG) {
-      console.log(this.formatMessage('DEBUG', context, message, data));
+      const logMessage = this.formatMessage('DEBUG', context, message, data) + '\n';
+      process.stdout.write(logMessage);
     }
   }
 

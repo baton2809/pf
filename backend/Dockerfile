@@ -2,8 +2,8 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install dumb-init
-RUN apk add --no-cache dumb-init
+# Install dumb-init and FFmpeg for audio conversion
+RUN apk add --no-cache dumb-init ffmpeg
 
 # Copy package files
 COPY package*.json ./

@@ -7,6 +7,8 @@ import { logger } from './utils/logger';
 import healthRoutes from './routes/health';
 import audioRoutes from './routes/audio';
 import authRoutes from './routes/auth';
+import trainingRoutes from './routes/training';
+import { v4 as uuidv4 } from 'uuid';
 
 // create fastify instance
 const fastify = Fastify({
@@ -17,15 +19,62 @@ async function start() {
   try {
     // register plugins
     await fastify.register(cors, {
-      origin: true, // allow all origins for development
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization'],
-      credentials: true
+      origin: ['http://localhost:3005', 'http://localhost:3000'], // specific origins for Docker
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Audio-Format', 'X-Duration', 'Content-Length'],
+      credentials: false // disable credentials to avoid CORS conflicts with SSE
     });
 
     await fastify.register(multipart, {
       limits: {
         fileSize: 50 * 1024 * 1024 // 50mb limit
+      }
+    });
+
+    // add content type parser for binary uploads
+    fastify.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (req: any, body: Buffer, done: any) => {
+      done(null, body);
+    });
+
+    // request logging middleware
+    fastify.addHook('onRequest', async (request: any) => {
+      request.startTime = Date.now();
+      request.requestId = uuidv4().substring(0, 8); // short ID for tracing
+      
+      // debug multipart requests
+      if (request.url.includes('/api/audio/upload')) {
+        logger.info('AudioUpload', `Incoming request: ${request.method} ${request.url}`, {
+          method: request.method,
+          url: request.url,
+          headers: Object.keys(request.headers),
+          contentType: request.headers['content-type'] || 'none',
+          origin: request.headers.origin || 'none'
+        });
+      }
+    });
+
+    fastify.addHook('onResponse', async (request: any, reply) => {
+      const duration = Date.now() - request.startTime;
+      const { method, url } = request;
+      const status = reply.statusCode;
+      
+      // skip health checks to avoid spam
+      if (url === '/health') return;
+      
+      const logData = {
+        requestId: request.requestId,
+        method,
+        url,
+        status,
+        duration: `${duration}ms`,
+        ip: request.ip,
+        userAgent: request.headers['user-agent']?.substring(0, 100) || 'unknown'
+      };
+
+      if (status >= 400) {
+        logger.warn('HTTPRequest', `${method} ${url} - ${status}`, logData);
+      } else {
+        logger.info('HTTPRequest', `${method} ${url} - ${status}`, logData);
       }
     });
 
@@ -36,6 +85,7 @@ async function start() {
     await fastify.register(healthRoutes);
     await fastify.register(authRoutes);
     await fastify.register(audioRoutes);
+    await fastify.register(trainingRoutes);
 
     // start server
     await fastify.listen({ 

@@ -1,0 +1,443 @@
+import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { trainingApiService } from '../services/trainingApi';
+
+// analysis components
+import { TranscriptionComponent } from '../components/analysis/TranscriptionComponent';
+import { PaceComponent } from '../components/analysis/PaceComponent';
+import { EnergyComponent } from '../components/analysis/EnergyComponent';
+import { ClarityComponent } from '../components/analysis/ClarityComponent';
+import { ConfidenceComponent } from '../components/analysis/ConfidenceComponent';
+import { FinalScoreComponent } from '../components/analysis/FinalScoreComponent';
+
+// utility functions
+import { 
+  calculateOverallScore, 
+  isTranscriptionReady, 
+  areMetricsReady, 
+  isAnalysisComplete,
+  estimateTotalWords
+} from '../utils/scoreCalculations';
+
+// interface for component state management
+interface SessionComponentState {
+  transcriptionReady: boolean;
+  metricsReady: boolean;
+  analysisComplete: boolean;
+}
+
+const SessionDetailsComponent: React.FC = () => {
+  const { sessionId } = useParams<{ sessionId: string }>();
+  const navigate = useNavigate();
+  const [sessionStatus, setSessionStatus] = useState<string>('processing');
+  const [progress, setProgress] = useState<number>(50);
+  const [message, setMessage] = useState<string>('Analyzing your presentation...');
+  const [analysisData, setAnalysisData] = useState<any>(null);
+  const [transcriptionData, setTranscriptionData] = useState<any>(null);
+  const [isLoadingInitialData, setIsLoadingInitialData] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  
+  // component visibility state based on SSE progress
+  const [componentState, setComponentState] = useState<SessionComponentState>({
+    transcriptionReady: false,
+    metricsReady: false,
+    analysisComplete: false
+  });
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const isNavigatingAwayRef = useRef<boolean>(false);
+  const initializeSSERef = useRef<(() => Promise<void>) | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // SSE message handler - moved to top level
+  const handleSSEMessage = useCallback((data: any) => {
+    console.log('[SessionDetails] SSE message received:', data);
+    console.log('[SessionDetails] SSE data details:', {
+      type: data.type,
+      progress: data.progress,
+      step: data.step,
+      status: data.status,
+      message: data.message
+    });
+    
+    // only filter out messages with explicit sessionId that don't match
+    if (data.sessionId && data.sessionId !== sessionId) {
+      console.warn('[SessionDetails] Received SSE message for different session, ignoring');
+      return;
+    }
+    
+    // update UI based on message type
+    setSessionStatus(data.status);
+    setProgress(data.progress || 0);
+    setMessage(data.message || 'Processing...');
+    
+    // handle different message types
+    switch (data.type) {
+      case 'status':
+      case 'progress':
+        // check for component visibility thresholds
+        const transcriptionReady = isTranscriptionReady(data.progress, data.step);
+        const metricsReady = areMetricsReady(data.progress, data.step);
+        const analysisComplete = isAnalysisComplete(data.progress, data.status);
+        
+        console.log('[SessionDetails] Component visibility check:', {
+          transcriptionReady,
+          metricsReady,
+          analysisComplete,
+          progressCheck: data.progress >= 85,
+          stepCheck: data.step === 'parallel_processing_completed',
+          currentProgress: data.progress,
+          currentStep: data.step
+        });
+        
+        setComponentState({
+          transcriptionReady,
+          metricsReady,
+          analysisComplete
+        });
+        break;
+        
+      case 'transcription_completed':
+        console.log('[SessionDetails] Transcription completed via SSE, setting segments:', data.segments?.length);
+        if (data.segments && data.segments.length > 0) {
+          setTranscriptionData(data.segments);
+        }
+        setComponentState(prev => ({ ...prev, transcriptionReady: true }));
+        break;
+        
+      case 'completed':
+        console.log('[SessionDetails] Analysis completed via SSE');
+        if (data.results) {
+          setAnalysisData(data.results);
+          if (data.results.speech_segments) {
+            setTranscriptionData(data.results.speech_segments);
+          }
+        }
+        setComponentState({
+          transcriptionReady: true,
+          metricsReady: true,
+          analysisComplete: true
+        });
+        setIsLoadingInitialData(false);
+        
+        // close SSE connection on frontend side
+        if (eventSourceRef.current) {
+          console.log('[SessionDetails] Closing SSE after completion');
+          eventSourceRef.current.close();
+          eventSourceRef.current = null;
+        }
+        break;
+        
+      case 'error':
+        console.error('[SessionDetails] Processing error via SSE:', data.error);
+        setError(data.error || 'Processing failed');
+        break;
+        
+      case 'connection_closing':
+        console.log('[SessionDetails] SSE connection closing as expected');
+        if (eventSourceRef.current) {
+          eventSourceRef.current.close();
+          eventSourceRef.current = null;
+        }
+        break;
+        
+      default:
+        console.log('[SessionDetails] Unknown SSE message type:', data.type);
+    }
+  }, [sessionId]);
+
+  // fallback HTTP status check - moved to top level
+  const checkSessionStatusHTTP = useCallback(async () => {
+    try {
+      const status = await trainingApiService.getSessionStatus(sessionId!);
+      
+      setSessionStatus(status.status);
+      setProgress(status.progress);
+      setMessage(status.message);
+      
+      if (status.status === 'completed') {
+        // fetch full results
+        const result = await trainingApiService.getSessionResults(sessionId!);
+        if ('session' in result && result.session.results) {
+          setAnalysisData(result.session.results);
+          if (result.session.results.speech_segments) {
+            setTranscriptionData(result.session.results.speech_segments);
+          }
+        }
+        setIsLoadingInitialData(false);
+      }
+    } catch (error: any) {
+      console.error('[SessionDetails] HTTP status check failed:', error);
+      setError(`Connection failed: ${error.message}`);
+    }
+  }, [sessionId]);
+  
+  // SSE error handler - moved to top level
+  const handleSSEError = useCallback((error: Event) => {
+    console.error('[SessionDetails] SSE connection error:', error);
+    
+    // if connection fails, fallback to HTTP polling after delay
+    // BUT skip HTTP polling fallback for completed sessions
+    setTimeout(() => {
+      if (!isNavigatingAwayRef.current && sessionStatus !== 'completed') {
+        console.log('[SessionDetails] SSE failed, falling back to HTTP status check');
+        checkSessionStatusHTTP();
+      } else {
+        console.log('[SessionDetails] Skipping HTTP fallback - session completed or unmounting');
+      }
+    }, 2000);
+  }, [checkSessionStatusHTTP, sessionStatus]);
+  // smart SSE initialization - moved to top level
+  const initializeSSE = useCallback(async () => {
+    if (!sessionId) return;
+    
+    console.log(`[SessionDetails] Initializing SSE for session ${sessionId}`);
+    
+    try {
+      // 1. First check current session status
+      const initialStatus = await trainingApiService.getSessionStatus(sessionId);
+      
+      console.log('[SessionDetails] Initial status:', initialStatus);
+      
+      // 2. Update UI immediately
+      setProgress(initialStatus.progress || 0);
+      setSessionStatus(initialStatus.status);
+      setMessage(initialStatus.message);
+      
+      // 3. If already completed - load results and don't start SSE
+      if (initialStatus.status === 'completed') {
+        const results = await trainingApiService.getSessionResults(sessionId);
+        if ('session' in results) {
+          setAnalysisData(results.session.results);
+          if (results.session.results?.speech_segments) {
+            setTranscriptionData(results.session.results.speech_segments);
+          }
+        }
+        // set all components as ready
+        setComponentState({
+          transcriptionReady: true,
+          metricsReady: true,
+          analysisComplete: true
+        });
+        setIsLoadingInitialData(false);
+        return; // SSE not needed
+      }
+      
+      // 4. If processing or uploaded - start SSE
+      if (['uploaded', 'processing'].includes(initialStatus.status)) {
+        // use startSSE directly to avoid dependency cycle
+        // close existing connection if any
+        if (eventSourceRef.current) {
+          console.log('[SessionDetails] Closing existing SSE connection');
+          eventSourceRef.current.close();
+        }
+        
+        if (isNavigatingAwayRef.current) {
+          console.log('[SessionDetails] Skipping SSE start - component unmounting');
+          return;
+        }
+        
+        console.log('[SessionDetails] Starting SSE connection');
+        
+        const eventSource = trainingApiService.createSSEConnection(
+          sessionId,
+          handleSSEMessage,
+          handleSSEError
+        );
+        
+        eventSourceRef.current = eventSource;
+        
+        // handle open event
+        eventSource.onopen = () => {
+          console.log('[SessionDetails] SSE connection opened');
+        };
+      }
+      
+      // 5. If initialized or recording - wait and retry
+      if (['initialized', 'recording'].includes(initialStatus.status)) {
+        console.log('[SessionDetails] Session not ready for processing, waiting...');
+        setTimeout(() => {
+          if (!isNavigatingAwayRef.current) {
+            initializeSSERef.current?.(); // retry after 1 second
+          }
+        }, 1000);
+      }
+      
+    } catch (error: any) {
+      console.error('[SessionDetails] SSE initialization error:', error);
+      setError('Failed to connect to server');
+    }
+  }, [sessionId, handleSSEMessage, handleSSEError]);
+
+  // store initializeSSE in ref to avoid dependency issues
+  initializeSSERef.current = initializeSSE;
+
+  // removed unused startSSE function - using initializeSSE directly
+
+  useEffect(() => {
+    if (!sessionId) {
+      navigate('/history');
+      return;
+    }
+
+    // reset all refs on mount to handle React remount scenarios
+    console.log(`[SessionDetails] Component mounted for session ${sessionId}, resetting state`);
+    isNavigatingAwayRef.current = false;
+    
+    // create new abort controller for this session
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
+    // start initialization using ref to avoid dependency loop
+    initializeSSERef.current?.();
+
+    // cleanup on unmount
+    return () => {
+      console.log(`[SessionDetails] Component unmounting, cleaning up SSE for session ${sessionId}`);
+      
+      // set navigation flag first to stop any ongoing operations
+      isNavigatingAwayRef.current = true;
+      
+      // abort any ongoing requests
+      if (abortControllerRef.current) {
+        console.log(`[SessionDetails] Aborting ongoing requests on unmount`);
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      
+      // close SSE connection
+      if (eventSourceRef.current) {
+        console.log(`[SessionDetails] Closing SSE connection on unmount`);
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+    };
+  }, [sessionId, navigate]);
+
+
+  return (
+    <div>
+      <h3 style={{ 
+        marginBottom: '20px', 
+        fontSize: '1.5rem' 
+      }}>
+        Результаты анализа сессии
+      </h3>
+
+      {/* error display */}
+      {error && (
+        <div style={{
+          padding: '16px',
+          marginBottom: '20px',
+          backgroundColor: '#fee',
+          border: '1px solid #fcc',
+          borderRadius: '4px',
+          color: '#d00'
+        }}>
+          {error}
+        </div>
+      )}
+
+      {/* основное содержимое - компоненты как кирпичики */}
+      <div style={{ 
+        display: 'grid', 
+        gridTemplateColumns: 'repeat(2, 1fr)', 
+        gap: '20px',
+        gridAutoRows: 'min-content'
+      }}>
+        {/* транскрипт - первый компонент */}
+        <TranscriptionComponent 
+          segments={transcriptionData || []}
+          isLoading={!componentState.transcriptionReady && isLoadingInitialData}
+        />
+
+        {/* Loading indicator when analysis not yet started */}
+        {!componentState.metricsReady && (
+          <div className="card" style={{
+            padding: '20px 24px',
+            textAlign: 'center'
+          }}>
+            <h3 style={{
+              fontSize: '16px',
+              fontWeight: 600,
+              color: '#212529',
+              marginBottom: '16px'
+            }}>
+              Анализ в процессе...
+            </h3>
+            <div style={{
+              fontSize: '14px',
+              color: '#6c757d',
+              marginBottom: '16px'
+            }}>
+              {message}
+            </div>
+            <div style={{
+              width: '100%',
+              height: '8px',
+              backgroundColor: '#f0f0f0',
+              borderRadius: '4px',
+              overflow: 'hidden'
+            }}>
+              <div style={{
+                width: `${progress}%`,
+                height: '100%',
+                backgroundColor: '#4CAF50',
+                transition: 'width 0.3s ease'
+              }} />
+            </div>
+          </div>
+        )}
+
+        {/* Analysis components - show when metrics are ready (85% progress) */}
+        {componentState.metricsReady && analysisData && (
+          <>
+            <PaceComponent 
+              paceRate={analysisData.metrics?.pace_rate}
+              paceMark={analysisData.metrics?.pace_mark}
+            />
+            
+            <EnergyComponent 
+              energyMark={analysisData.metrics?.emotion_mark}
+              duration={transcriptionData ? Math.ceil(transcriptionData[transcriptionData.length - 1]?.end / 60) : 12}
+            />
+            
+            <ClarityComponent 
+              unclarityMoments={analysisData.pitch_evaluation?.unclarity_moments}
+              avgSentenceLength={analysisData.metrics?.avg_sentences_len}
+              repeatedWords={analysisData.pitch_evaluation?.filler_words}
+            />
+            
+            <ConfidenceComponent 
+              hesitantPhrases={analysisData.pitch_evaluation?.hesitant_phrases}
+              fillerWords={analysisData.pitch_evaluation?.filler_words}
+              totalWords={transcriptionData ? estimateTotalWords(transcriptionData) : 500}
+            />
+          </>
+        )}
+
+        {/* Final score component - show when analysis is complete (100%) */}
+        {componentState.analysisComplete && analysisData && (
+          <FinalScoreComponent 
+            overallScore={calculateOverallScore(analysisData)}
+            pitchMarks={analysisData.pitch_evaluation?.marks}
+            isLoading={false}
+          />
+        )}
+      </div>
+
+      <div style={{ textAlign: 'center', marginTop: '30px' }}>
+        <button
+          onClick={() => navigate('/history')}
+          className="btn btn-primary"
+        >
+          Вернуться к списку сессий
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// prevent component remounting with memo
+export const SessionDetails = memo(SessionDetailsComponent);

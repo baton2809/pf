@@ -1,78 +1,76 @@
-import React from 'react';
-import { AnalysisModalProps } from '../types/recording';
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 
-export const AnalysisModal: React.FC<AnalysisModalProps> = ({ 
-  isVisible, 
-  progress,
-  onClose 
+interface AnalysisModalProps {
+  isOpen: boolean;
+  sessionId: string;
+  onComplete?: (sessionId: string) => void;
+}
+
+export const AnalysisModal: React.FC<AnalysisModalProps> = ({
+  isOpen,
+  sessionId,
+  onComplete
 }) => {
-  if (!isVisible) {
-    return null;
-  }
+  const navigate = useNavigate();
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    if (!isOpen || !sessionId) return;
+
+    // show upload progress animation and redirect to session details
+    const progressInterval = setInterval(() => {
+      setProgress(prev => {
+        if (prev >= 100) {
+          clearInterval(progressInterval);
+          // redirect to session details after upload animation
+          setTimeout(() => {
+            if (onComplete) {
+              onComplete(sessionId);
+            } else {
+              navigate(`/sessions/${sessionId}`);
+            }
+          }, 500);
+          return 100;
+        }
+        return prev + 10;
+      });
+    }, 200);
+
+    return () => {
+      clearInterval(progressInterval);
+    };
+  }, [isOpen, sessionId, navigate, onComplete]);
+
+  if (!isOpen) return null;
 
   return (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      backgroundColor: 'rgba(0, 0, 0, 0.8)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 9999
-    }}>
-      <div style={{
-        backgroundColor: 'white',
-        borderRadius: '12px',
-        padding: '40px',
-        maxWidth: '500px',
-        width: '90%',
-        textAlign: 'center',
-        boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)'
-      }}>
-        <div style={{
-          fontSize: '24px',
-          fontWeight: 'bold',
-          color: '#333',
-          marginBottom: '16px'
-        }}>
-          Анализируем запись
-        </div>
-        
-        <div style={{
-          fontSize: '16px',
-          color: '#666',
-          marginBottom: '32px',
-          lineHeight: '1.5'
-        }}>
-          Извлекаем ключевые моменты, считаем метрики и готовим отчёт
-        </div>
-        
-        {/* Progress Bar */}
-        <div style={{
-          width: '100%',
-          height: '8px',
-          backgroundColor: '#f0f0f0',
-          borderRadius: '4px',
-          overflow: 'hidden',
-          marginBottom: '16px'
-        }}>
-          <div style={{
-            width: `${progress}%`,
-            height: '100%',
-            backgroundColor: '#4CAF50',
-            transition: 'width 0.3s ease',
-            borderRadius: '4px'
-          }} />
-        </div>
-        
-        <div style={{
-          fontSize: '14px',
-          color: '#888'
-        }}>
-          Это займёт несколько секунд
+    <div className="modal-overlay">
+      <div className="analysis-modal">
+        <div className="analysis-content">
+          <div className="analysis-icon">
+            {progress >= 100 ? '[OK]' : '[UPLOAD]'}
+          </div>
+          
+          <h2>
+            {progress >= 100 ? 'Загрузка завершена!' : 'Загружаем запись'}
+          </h2>
+          
+          <p className="analysis-description">
+            {progress >= 100 
+              ? 'Переходим к анализу результатов...' 
+              : 'Сохраняем вашу запись и начинаем анализ'}
+          </p>
+          
+          <div className="progress-container">
+            <div className="progress-bar">
+              <div 
+                className="progress-fill" 
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <div className="progress-text">{progress}%</div>
+          </div>
         </div>
       </div>
     </div>
