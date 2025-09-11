@@ -99,6 +99,15 @@ const SessionDetailsComponent: React.FC = () => {
           metricsReady,
           analysisComplete
         });
+        
+        // handle completion data when status is 'completed'
+        if (data.status === 'completed' && data.data) {
+          setAnalysisData(data.data);
+          if (data.data.speech_segments) {
+            setTranscriptionData(data.data.speech_segments);
+          }
+          setIsLoadingInitialData(false);
+        }
         break;
         
       case 'transcription_completed':
