@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { trainingApiService } from '../services/trainingApi';
+import { useAuth } from '../context/AuthContext';
 import { logger } from '../utils/logger';
 
 // analysis components
@@ -30,9 +30,10 @@ interface SessionComponentState {
 const SessionDetailsComponent: React.FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
+  const { trainingApi } = useAuth();
   const [sessionStatus, setSessionStatus] = useState<string>('processing');
   const [progress, setProgress] = useState<number>(50);
-  const [message, setMessage] = useState<string>('Analyzing your presentation...');
+  const [message, setMessage] = useState<string>('Анализируем вашу презентацию...');
   const [analysisData, setAnalysisData] = useState<any>(null);
   const [transcriptionData, setTranscriptionData] = useState<any>(null);
   const [isLoadingInitialData, setIsLoadingInitialData] = useState(true);
@@ -75,7 +76,7 @@ const SessionDetailsComponent: React.FC = () => {
     // update UI based on message type
     setSessionStatus(data.status);
     setProgress(data.progress || 0);
-    setMessage(data.message || 'Processing...');
+    setMessage(data.message || 'Обрабатываем...');
     
     // handle different message types
     switch (data.type) {
@@ -141,7 +142,7 @@ const SessionDetailsComponent: React.FC = () => {
         
       case 'error':
         logger.error('SessionDetails', 'Processing error via SSE', data.error);
-        setError(data.error || 'Processing failed');
+        setError(data.error || 'Ошибка обработки');
         break;
         
       case 'connection_closing':
@@ -160,7 +161,7 @@ const SessionDetailsComponent: React.FC = () => {
   // fallback HTTP status check - moved to top level
   const checkSessionStatusHTTP = useCallback(async () => {
     try {
-      const status = await trainingApiService.getSessionStatus(sessionId!);
+      const status = await trainingApi.getSessionStatus(sessionId!);
       
       setSessionStatus(status.status);
       setProgress(status.progress);
@@ -168,7 +169,7 @@ const SessionDetailsComponent: React.FC = () => {
       
       if (status.status === 'completed') {
         // fetch full results
-        const result = await trainingApiService.getSessionResults(sessionId!);
+        const result = await trainingApi.getSessionResults(sessionId!);
         if ('session' in result && result.session.results) {
           setAnalysisData(result.session.results);
           if (result.session.results.speech_segments) {
@@ -179,9 +180,9 @@ const SessionDetailsComponent: React.FC = () => {
       }
     } catch (error: any) {
       console.error('[SessionDetails] HTTP status check failed:', error);
-      setError(`Connection failed: ${error.message}`);
+      setError(`Ошибка соединения: ${error.message}`);
     }
-  }, [sessionId]);
+  }, [sessionId, trainingApi]);
   
   // SSE error handler - moved to top level
   const handleSSEError = useCallback((error: Event) => {
@@ -206,7 +207,7 @@ const SessionDetailsComponent: React.FC = () => {
     
     try {
       // 1. First check current session status
-      const initialStatus = await trainingApiService.getSessionStatus(sessionId);
+      const initialStatus = await trainingApi.getSessionStatus(sessionId);
       
       console.log('[SessionDetails] Initial status:', initialStatus);
       
@@ -217,7 +218,7 @@ const SessionDetailsComponent: React.FC = () => {
       
       // 3. If already completed - load results and don't start SSE
       if (initialStatus.status === 'completed') {
-        const results = await trainingApiService.getSessionResults(sessionId);
+        const results = await trainingApi.getSessionResults(sessionId);
         if ('session' in results) {
           setAnalysisData(results.session.results);
           if (results.session.results?.speech_segments) {
@@ -250,7 +251,7 @@ const SessionDetailsComponent: React.FC = () => {
         
         console.log('[SessionDetails] Starting SSE connection');
         
-        const eventSource = trainingApiService.createSSEConnection(
+        const eventSource = trainingApi.createSSEConnection(
           sessionId,
           handleSSEMessage,
           handleSSEError
@@ -276,9 +277,9 @@ const SessionDetailsComponent: React.FC = () => {
       
     } catch (error: any) {
       console.error('[SessionDetails] SSE initialization error:', error);
-      setError('Failed to connect to server');
+      setError('Не удалось подключиться к серверу');
     }
-  }, [sessionId, handleSSEMessage, handleSSEError]);
+  }, [sessionId, handleSSEMessage, handleSSEError, trainingApi]);
 
   // store initializeSSE in ref to avoid dependency issues
   initializeSSERef.current = initializeSSE;

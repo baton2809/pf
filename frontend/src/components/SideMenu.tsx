@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
 export const SideMenu: React.FC = () => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const location = useLocation();
+  const { currentUser, logout } = useAuth();
 
   const getIcon = (path: string) => {
     switch (path) {
@@ -155,6 +157,44 @@ export const SideMenu: React.FC = () => {
             </NavLink>
           ))}
         </nav>
+        
+        {/* user info and logout */}
+        <div className="menu-footer">
+          {currentUser && (
+            <div className="user-info">
+              <div className="user-avatar">
+                {currentUser.avatar_url ? (
+                  <img src={currentUser.avatar_url} alt="user avatar" />
+                ) : (
+                  <div className="avatar-placeholder">
+                    {currentUser.name.charAt(0).toUpperCase()}
+                  </div>
+                )}
+              </div>
+              {isExpanded && (
+                <div className="user-details">
+                  <div className="user-name">{currentUser.name}</div>
+                  <div className="user-email">{currentUser.email}</div>
+                </div>
+              )}
+            </div>
+          )}
+          
+          {isExpanded && (
+            <button 
+              className="logout-btn"
+              onClick={logout}
+              title="выйти"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                <polyline points="16,17 21,12 16,7"/>
+                <line x1="21" y1="12" x2="9" y2="12"/>
+              </svg>
+              <span>выйти</span>
+            </button>
+          )}
+        </div>
       </div>
       
       {/* overlay for mobile */}

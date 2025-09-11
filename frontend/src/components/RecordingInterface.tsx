@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { trainingApiService } from '../services/trainingApi';
+import { useAuth } from '../context/AuthContext';
 import { getTrainingTypeLabel } from '../utils/trainingTypes';
 
 interface RecordingInterfaceProps {}
@@ -8,6 +8,7 @@ interface RecordingInterfaceProps {}
 export const RecordingInterface: React.FC<RecordingInterfaceProps> = () => {
   const { trainingId } = useParams<{ trainingId: string }>();
   const navigate = useNavigate();
+  const { trainingApi } = useAuth();
   
   const [stage, setStage] = useState<'loading' | 'waiting' | 'countdown' | 'recording' | 'finalizing'>('loading');
   const [countdown, setCountdown] = useState(3);
@@ -20,11 +21,12 @@ export const RecordingInterface: React.FC<RecordingInterfaceProps> = () => {
   const streamRef = useRef<MediaStream | null>(null);
   const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const startingRecordingRef = useRef<boolean>(false);
+  const recordingStartTimeRef = useRef<number | null>(null);
 
   // initialize session on component mount - moved before useEffect
   const initializeSession = useCallback(async () => {
     try {
-      const data = await trainingApiService.initSession(trainingId!);
+      const data = await trainingApi.initSession(trainingId!);
       setSessionId(data.sessionId);
       setTraining(data.training);
       setStage('waiting');
@@ -33,7 +35,7 @@ export const RecordingInterface: React.FC<RecordingInterfaceProps> = () => {
       alert('Ошибка при инициализации сессии');
       navigate('/new-training');
     }
-  }, [trainingId, navigate]);
+  }, [trainingId, navigate, trainingApi]);
 
   // initialize session on component mount
   useEffect(() => {
@@ -126,7 +128,7 @@ export const RecordingInterface: React.FC<RecordingInterfaceProps> = () => {
       startingRecordingRef.current = true;
       
       // notify backend about recording start
-      await trainingApiService.startRecording(sessionId, new Date().toISOString());
+      await trainingApi.startRecording(sessionId, new Date().toISOString());
       
       const audioChunks: Blob[] = [];
       
@@ -147,6 +149,8 @@ export const RecordingInterface: React.FC<RecordingInterfaceProps> = () => {
       
       if (mediaRecorderRef.current.state === 'inactive') {
         mediaRecorderRef.current.start();
+        // capture exact start time when recording actually begins
+        recordingStartTimeRef.current = Date.now();
       }
       
       // clear any existing recording interval to prevent duplicates
@@ -155,14 +159,14 @@ export const RecordingInterface: React.FC<RecordingInterfaceProps> = () => {
       }
       
       recordingIntervalRef.current = setInterval(() => {
-        setRecordingTime((prev: number) => {
-          const newTime = prev + 1;
-          if (newTime >= 600) { // auto-stop after 10 minutes
+        if (recordingStartTimeRef.current) {
+          const actualDuration = Math.floor((Date.now() - recordingStartTimeRef.current) / 1000);
+          setRecordingTime(actualDuration);
+          
+          if (actualDuration >= 600) { // auto-stop after 10 minutes
             stopRecording();
-            return newTime;
           }
-          return newTime;
-        });
+        }
       }, 1000);
       
     } catch (error: any) {
@@ -178,10 +182,24 @@ export const RecordingInterface: React.FC<RecordingInterfaceProps> = () => {
   const stopRecording = useCallback(async () => {
     setStage('finalizing');
     
+    // calculate final duration before stopping
+    let finalDuration = recordingTime;
+    if (recordingStartTimeRef.current) {
+      finalDuration = Math.floor((Date.now() - recordingStartTimeRef.current) / 1000);
+      setRecordingTime(finalDuration);
+      recordingStartTimeRef.current = null;
+    }
+    
     // clear countdown interval if still running
     if (countdownIntervalRef.current) {
       clearInterval(countdownIntervalRef.current);
       countdownIntervalRef.current = null;
+    }
+    
+    // clear recording timer immediately
+    if (recordingIntervalRef.current) {
+      clearInterval(recordingIntervalRef.current);
+      recordingIntervalRef.current = null;
     }
     
     // stop recording if active
@@ -194,22 +212,30 @@ export const RecordingInterface: React.FC<RecordingInterfaceProps> = () => {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
-    
-    // clear recording timer
-    if (recordingIntervalRef.current) {
-      clearInterval(recordingIntervalRef.current);
-      recordingIntervalRef.current = null;
-    }
-  }, []);
+  }, [recordingTime]);
 
   const uploadAudio = async (audioBlob: Blob) => {
     if (!sessionId) return;
     
     try {
-      console.log('Starting audio upload for session:', sessionId);
+      // validate recording duration before upload
+      const actualDuration = Math.max(recordingTime, 1); // ensure at least 1 second
+      if (recordingTime < 1) {
+        console.warn('Recording duration too short, adjusting to 1 second', { 
+          recordingTime, 
+          adjustedDuration: actualDuration 
+        });
+      }
+      
+      console.log('Starting audio upload for session:', sessionId, {
+        recordingTime,
+        actualDuration,
+        blobSize: audioBlob.size,
+        fileSizeKB: Math.round(audioBlob.size / 1024)
+      });
       
       // wait for upload to complete first
-      const uploadResponse = await trainingApiService.uploadAudio(sessionId, audioBlob, recordingTime, 'audio/webm');
+      const uploadResponse = await trainingApi.uploadAudio(sessionId, audioBlob, actualDuration, 'audio/webm');
       
       console.log('Audio uploaded successfully:', uploadResponse);
       

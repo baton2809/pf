@@ -1,19 +1,14 @@
+// use environment variable for API URL, fallback to ngrok
 const getApiUrl = () => {
-  // получаем hostname из браузера
-  const hostname = window.location.hostname;
-  const protocol = window.location.protocol;
-  
-  // если localhost или 127.0.0.1 - используем localhost для бэкенда
-  if (hostname === 'localhost' || hostname === '127.0.0.1') {
-    return 'http://localhost:3000';
+  // always use environment variable if available
+  if (process.env.REACT_APP_API_URL) {
+    console.log('Using environment API URL:', process.env.REACT_APP_API_URL);
+    return process.env.REACT_APP_API_URL;
   }
   
-  if (protocol === 'https:') {
-    return `https://${hostname}:3000`;
-  }
-  
-  // иначе используем тот же IP что и для фронтенда
-  return `http://${hostname}:3000`;
+  // no fallback - require environment variable
+  console.error('REACT_APP_API_URL environment variable is required');
+  throw new Error('REACT_APP_API_URL environment variable not set');
 };
 
 export const API_URL = getApiUrl();

@@ -1,6 +1,42 @@
 import React from 'react';
+import { useAuth } from '../context/AuthContext';
 
 export const Settings: React.FC = () => {
+  const { currentUser, isAuthenticated, isInitialized, isBackendAvailable } = useAuth();
+
+  // loading state while auth is initializing
+  if (!isInitialized) {
+    return (
+      <div>
+        <h3 style={{ marginBottom: '20px', fontSize: '1.5rem' }}>
+          Настройки аккаунта
+        </h3>
+        <div className="card" style={{ padding: '24px', textAlign: 'center' }}>
+          <div style={{ color: '#5f6368' }}>Загрузка...</div>
+        </div>
+      </div>
+    );
+  }
+
+  // not authenticated state
+  if (!isAuthenticated || !currentUser) {
+    return (
+      <div>
+        <h3 style={{ marginBottom: '20px', fontSize: '1.5rem' }}>
+          Настройки аккаунта
+        </h3>
+        <div className="card" style={{ padding: '24px', textAlign: 'center' }}>
+          <div style={{ color: '#5f6368', marginBottom: '16px' }}>
+            Необходима авторизация для доступа к настройкам
+          </div>
+          <div style={{ fontSize: '14px', color: '#9ca3af' }}>
+            Пожалуйста, войдите в систему
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <h3 style={{ marginBottom: '20px', fontSize: '1.5rem' }}>
@@ -12,6 +48,24 @@ export const Settings: React.FC = () => {
           <h4 style={{ marginBottom: '16px', fontSize: '18px', fontWeight: 600 }}>
             Профиль пользователя
           </h4>
+          
+          {/* user avatar if available */}
+          {currentUser.avatar_url && (
+            <div style={{ marginBottom: '16px', textAlign: 'center' }}>
+              <img
+                src={currentUser.avatar_url}
+                alt="Avatar"
+                style={{
+                  width: '80px',
+                  height: '80px',
+                  borderRadius: '50%',
+                  objectFit: 'cover',
+                  border: '3px solid #e5e7eb'
+                }}
+              />
+            </div>
+          )}
+          
           <div style={{ display: 'grid', gap: '16px' }}>
             <div>
               <label style={{ 
@@ -24,7 +78,7 @@ export const Settings: React.FC = () => {
               </label>
               <input
                 type="text"
-                value="Пользователь"
+                value={currentUser.name || 'Не указано'}
                 readOnly
                 style={{
                   width: '100%',
@@ -48,7 +102,7 @@ export const Settings: React.FC = () => {
               </label>
               <input
                 type="email"
-                value="user@example.com"
+                value={currentUser.email}
                 readOnly
                 style={{
                   width: '100%',
@@ -60,30 +114,15 @@ export const Settings: React.FC = () => {
                 }}
               />
             </div>
-            
-            <div>
-              <label style={{ 
-                display: 'block', 
-                fontSize: '14px', 
-                color: '#5f6368', 
-                marginBottom: '8px' 
-              }}>
-                ID пользователя
-              </label>
-              <input
-                type="text"
-                value="default-user"
-                readOnly
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  border: '1px solid #dee2e6',
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  backgroundColor: '#f8f9fa',
-                  fontFamily: 'monospace'
-                }}
-              />
+          </div>
+          
+          {/* backend connection status */}
+          <div style={{ marginTop: '24px', padding: '12px', backgroundColor: isBackendAvailable ? '#f0f9ff' : '#fef2f2', borderRadius: '8px', border: `1px solid ${isBackendAvailable ? '#bae6fd' : '#fecaca'}` }}>
+            <div style={{ fontSize: '14px', fontWeight: '500', color: isBackendAvailable ? '#0c4a6e' : '#b91c1c', marginBottom: '4px' }}>
+              Статус подключения
+            </div>
+            <div style={{ fontSize: '12px', color: isBackendAvailable ? '#0369a1' : '#dc2626' }}>
+              {isBackendAvailable ? '✓ Подключено к серверу' : '⚠ Отсутствует подключение к серверу'}
             </div>
           </div>
         </div>

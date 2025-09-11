@@ -1,11 +1,21 @@
 import { FastifyInstance } from 'fastify';
 import { database } from '../services/database';
 import { logger } from '../utils/logger';
+import { AuthService } from '../services/auth-service';
+import { createAuthMiddleware } from '../middleware/auth-middleware';
 
-export async function analyticsRoutes(fastify: FastifyInstance) {
-  // get analytics data for user dashboard
-  fastify.get('/analytics', async (request, reply) => {
-    const userId = 'default-user'; // todo: get from auth context
+interface AnalyticsRoutesOptions {
+  authService: AuthService;
+  prefix?: string;
+}
+
+export async function analyticsRoutes(fastify: FastifyInstance, options: AnalyticsRoutesOptions) {
+  const { authService } = options;
+  const authMiddleware = createAuthMiddleware(authService);
+  
+  // get analytics data for user dashboard - requires auth
+  fastify.get('/analytics', { preHandler: authMiddleware }, async (request, reply) => {
+    const userId = request.user!.userId; // get from JWT token
     
     try {
       // get all completed trainings with ML results

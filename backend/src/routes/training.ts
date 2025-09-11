@@ -4,23 +4,44 @@ import { database } from '../services/database';
 import { audioProcessor } from '../services/audio-processor';
 import { logger } from '../utils/logger';
 import { sseManager } from '../services/sse-manager';
+import { AuthService } from '../services/auth-service';
+import { createAuthMiddleware, createOptionalAuthMiddleware } from '../middleware/auth-middleware';
 
-const trainingRoutes: FastifyPluginAsync = async (fastify) => {
+interface TrainingRoutesOptions {
+  authService: AuthService;
+}
+
+const trainingRoutes: FastifyPluginAsync<TrainingRoutesOptions> = async (fastify, options) => {
+  const { authService } = options;
+  const authMiddleware = createAuthMiddleware(authService);
+  const optionalAuthMiddleware = createOptionalAuthMiddleware(authService);
+
+  // helper function to validate session ownership
+  const validateSessionOwnership = async (sessionId: string, userId: string) => {
+    const session = await database.getSessionBySessionId(sessionId);
+    if (!session) {
+      return { valid: false, error: 'Сессия не найдена', code: 404 };
+    }
+    if (session.user_id && session.user_id !== userId) {
+      return { valid: false, error: 'Доступ запрещен: сессия принадлежит другому пользователю', code: 403 };
+    }
+    return { valid: true, session };
+  };
   
-  // create training endpoint (step 1 in refactoring.md)
+  // create training endpoint (step 1 in refactoring.md) - requires auth
   fastify.post<{
     Body: {
       title: string;
       type: string;
-      userId: string;
     };
     Reply: { trainingId: string; status: string } | { error: string };
-  }>('/api/training/create', async (request, reply) => {
+  }>('/api/training/create', { preHandler: authMiddleware }, async (request, reply) => {
     try {
-      const { title, type = 'presentation', userId } = request.body;
+      const { title, type = 'presentation' } = request.body;
+      const userId = request.user!.userId; // get from JWT token
       
-      if (!title || !userId) {
-        return reply.code(400).send({ error: 'title and userId are required' });
+      if (!title) {
+        return reply.code(400).send({ error: 'title is required' });
       }
 
       const trainingId = uuidv4();
@@ -66,13 +87,13 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
       // get training from database
       const training = await database.getTraining(trainingId);
       if (!training) {
-        return reply.code(404).send({ error: 'Training not found' });
+        return reply.code(404).send({ error: 'Тренинг не найден' });
       }
       
       // get file from multipart form
       const data = await request.file();
       if (!data) {
-        return reply.code(400).send({ error: 'No presentation file uploaded' });
+        return reply.code(400).send({ error: 'Файл презентации не загружен' });
       }
       
       // ensure presentations directory exists
@@ -102,12 +123,12 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
       // todo: add text extraction for PDF files here if needed
       
       return { 
-        message: 'presentation uploaded', 
+        message: 'презентация загружена', 
         hasPresentation: true 
       };
     } catch (error: any) {
       logger.error('PresentationUpload', 'Failed to upload presentation', error);
-      return reply.code(500).send({ error: 'Failed to upload presentation' });
+      return reply.code(500).send({ error: 'Ошибка загрузки презентации' });
     }
   });
 
@@ -122,21 +143,28 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
         hasPresentation: boolean; 
       } 
     } | { error: string };
-  }>('/api/training/:trainingId/session/init', async (request, reply) => {
+  }>('/api/training/:trainingId/session/init', { preHandler: authMiddleware }, async (request, reply) => {
     try {
       const { trainingId } = request.params;
+      const userId = request.user!.userId; // get from JWT token
       
       // get training from database
       const training = await database.getTraining(trainingId);
       if (!training) {
-        return reply.code(404).send({ error: 'Training not found' });
+        return reply.code(404).send({ error: 'Тренинг не найден' });
       }
       
-      // create new session
+      // verify training belongs to authenticated user
+      if (training.user_id !== userId) {
+        return reply.code(403).send({ error: 'Доступ запрещен: тренинг принадлежит другому пользователю' });
+      }
+      
+      // create new session linked to user
       const sessionId = uuidv4();
       await database.createNewSession(trainingId, {
         id: sessionId,
-        status: 'initialized'
+        status: 'initialized',
+        user_id: userId // link session to user
       });
       
       logger.info('SessionInit', 'Session initialized successfully', {
@@ -164,13 +192,20 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
     Params: { sessionId: string };
     Body: { timestamp: string };
     Reply: { status: string; message: string } | { error: string };
-  }>('/api/training/session/:sessionId/start', async (request, reply) => {
+  }>('/api/training/session/:sessionId/start', { preHandler: authMiddleware }, async (request, reply) => {
     try {
       const { sessionId } = request.params;
       const { timestamp } = request.body;
+      const userId = request.user!.userId; // get from JWT token
       
       if (!timestamp) {
         return reply.code(400).send({ error: 'timestamp is required' });
+      }
+
+      // validate session ownership
+      const validation = await validateSessionOwnership(sessionId, userId);
+      if (!validation.valid) {
+        return reply.code(validation.code || 500).send({ error: validation.error || 'Ошибка валидации' });
       }
       
       // update session status and start time
@@ -180,7 +215,7 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
       });
       
       if (!session) {
-        return reply.code(404).send({ error: 'Session not found' });
+        return reply.code(404).send({ error: 'Сессия не найдена' });
       }
       
       logger.info('SessionStart', 'Recording started', {
@@ -217,10 +252,28 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ error: 'Invalid audio data' });
       }
       
+      // validate audio properties
+      if (duration < 1) {
+        logger.warn('AudioUpload', 'Audio duration too short, rejecting', { 
+          sessionId, 
+          duration, 
+          fileSizeKB: Math.round(audioBuffer.length / 1024) 
+        });
+        return reply.code(400).send({ error: 'Audio duration must be at least 1 second' });
+      }
+      
+      if (audioBuffer.length < 1024) { // less than 1KB
+        logger.warn('AudioUpload', 'Audio file too small, rejecting', { 
+          sessionId, 
+          fileSizeBytes: audioBuffer.length 
+        });
+        return reply.code(400).send({ error: 'Audio file too small' });
+      }
+      
       // get session from database
       const session = await database.getSessionBySessionId(sessionId);
       if (!session) {
-        return reply.code(404).send({ error: 'Session not found' });
+        return reply.code(404).send({ error: 'Сессия не найдена' });
       }
       
       // determine file extension from format header
@@ -246,7 +299,7 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
       // avoid race condition by doing single status update
       const currentSession = await database.getSessionBySessionId(sessionId);
       if (!currentSession) {
-        return reply.code(404).send({ error: 'Session not found' });
+        return reply.code(404).send({ error: 'Сессия не найдена' });
       }
       
       if (currentSession.status !== 'recording') {
@@ -276,7 +329,7 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
         type: 'progress',
         status: 'processing',
         progress: 20,
-        message: 'Audio uploaded, starting analysis...',
+        message: 'Аудио загружено, начинаем анализ...',
         step: 'processing_start',
         sessionId,
         timestamp: new Date().toISOString()
@@ -289,11 +342,11 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
       return { 
         sessionId, 
         status: 'processing',
-        message: 'audio uploaded, analysis started' 
+        message: 'аудио загружено, анализ запущен' 
       };
     } catch (error: any) {
       logger.error('AudioUpload', 'Audio upload failed', error);
-      return reply.code(500).send({ error: 'Audio upload failed' });
+      return reply.code(500).send({ error: 'Ошибка загрузки аудио' });
     }
   });
   
@@ -313,7 +366,7 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
       // check if session exists
       const session = await database.getSessionBySessionId(sessionId);
       if (!session) {
-        return reply.code(404).send({ error: 'Session not found' });
+        return reply.code(404).send({ error: 'Сессия не найдена' });
       }
 
       // calculate progress based on status
@@ -323,31 +376,31 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
       switch (session.status) {
         case 'initialized':
           progress = 0;
-          message = 'Session initialized';
+          message = 'Сессия инициализирована';
           break;
         case 'recording':
           progress = 10;
-          message = 'Recording in progress';
+          message = 'Идёт запись';
           break;
         case 'uploaded':
           progress = 20;
-          message = 'Audio uploaded, preparing for analysis';
+          message = 'Аудио загружено, подготавливаем к анализу';
           break;
         case 'processing':
           progress = 50;
-          message = 'Analyzing your presentation...';
+          message = 'Анализируем вашу презентацию...';
           break;
         case 'completed':
           progress = 100;
-          message = 'Analysis complete';
+          message = 'Анализ завершен';
           break;
         case 'failed':
           progress = 0;
-          message = 'Analysis failed';
+          message = 'Ошибка анализа';
           break;
         default:
           progress = 0;
-          message = 'Unknown status';
+          message = 'Неизвестный статус';
       }
 
       return {
@@ -379,12 +432,12 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
       
       const session = await database.getSessionBySessionId(sessionId);
       if (!session) {
-        return reply.code(404).send({ error: 'Session not found' });
+        return reply.code(404).send({ error: 'Сессия не найдена' });
       }
       
       const training = await database.getTraining(session.training_id);
       if (!training) {
-        return reply.code(404).send({ error: 'Training not found' });
+        return reply.code(404).send({ error: 'Тренинг не найден' });
       }
       
       logger.debug('SessionResults', 'Session status check', { 
@@ -396,7 +449,7 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
       if (session.status !== 'completed') {
         return reply.code(202).send({ 
           status: session.status,
-          message: 'analysis in progress' 
+          message: 'анализ в процессе' 
         });
       }
       
@@ -419,13 +472,12 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  // get completed trainings for history page
+  // get completed trainings for history page - requires auth
   fastify.get<{
-    Querystring: { userId?: string };
     Reply: { trainings: any[] } | { error: string };
-  }>('/api/training/history', async (request, reply) => {
+  }>('/api/training/history', { preHandler: authMiddleware }, async (request, reply) => {
     try {
-      const { userId } = request.query;
+      const userId = request.user!.userId; // get from JWT token
       
       // get completed trainings (1 training = 1 record)
       const trainings = await database.getCompletedTrainings(userId);
@@ -442,13 +494,12 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  // get all training sessions endpoint (legacy - for compatibility)
+  // get all training sessions endpoint (legacy - for compatibility) - requires auth
   fastify.get<{
-    Querystring: { userId?: string };
     Reply: { sessions: any[] } | { error: string };
-  }>('/api/training/sessions', async (request, reply) => {
+  }>('/api/training/sessions', { preHandler: authMiddleware }, async (request, reply) => {
     try {
-      const { userId } = request.query;
+      const userId = request.user!.userId; // get from JWT token
       
       // get all sessions from new sessions table
       const sessions = await database.getTrainingSessions(userId);
@@ -491,7 +542,7 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
       // get session from database
       const session = await database.getSessionBySessionId(sessionId);
       if (!session) {
-        return reply.code(404).send({ error: 'Session not found in database' });
+        return reply.code(404).send({ error: 'Сессия не найдена в базе данных' });
       }
       
       // get related training
@@ -586,7 +637,7 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
         sessionId: request.params.sessionId, 
         error 
       });
-      return reply.code(500).send({ error: 'Diagnostic check failed' });
+      return reply.code(500).send({ error: 'Ошибка диагностической проверки' });
     }
   });
 
@@ -600,11 +651,13 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
       // check if session exists
       const session = await database.getSessionBySessionId(sessionId);
       if (!session) {
-        return reply.code(404).send({ error: 'Session not found' });
+        return reply.code(404).send({ error: 'Сессия не найдена' });
       }
 
-
-      // setup SSE headers
+      // setup SSE headers using hijack to take raw control
+      reply.hijack();
+      
+      // write SSE headers manually
       reply.raw.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
@@ -643,7 +696,7 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
           type: 'completed',
           status: 'completed',
           progress: 100,
-          message: 'Analysis complete',
+          message: 'Анализ завершен',
           sessionId,
           results: session.ml_results,
           timestamp: new Date().toISOString()
@@ -662,7 +715,7 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
         sessionId,
         error: error.message
       });
-      return reply.code(500).send({ error: 'Failed to establish SSE connection' });
+      return reply.code(500).send({ error: 'Ошибка установки SSE соединения' });
     }
   });
 
@@ -704,19 +757,19 @@ const trainingRoutes: FastifyPluginAsync = async (fastify) => {
   function getStatusMessage(status: string): string {
     switch (status) {
       case 'initialized':
-        return 'Session initialized';
+        return 'Сессия инициализирована';
       case 'recording':
-        return 'Recording in progress';
+        return 'Идёт запись';
       case 'uploaded':
-        return 'Audio uploaded, preparing for analysis';
+        return 'Аудио загружено, подготавливаем к анализу';
       case 'processing':
-        return 'Analyzing your presentation...';
+        return 'Анализируем вашу презентацию...';
       case 'completed':
-        return 'Analysis complete';
+        return 'Анализ завершен';
       case 'failed':
-        return 'Analysis failed';
+        return 'Ошибка анализа';
       default:
-        return 'Unknown status';
+        return 'Неизвестный статус';
     }
   }
 

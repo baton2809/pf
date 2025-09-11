@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { trainingApiService } from '../services/trainingApi';
+import { authTrainingApiService } from '../services/authTrainingApi';
 
 interface TrainingData {
   id: string;
@@ -29,7 +29,7 @@ export const History: React.FC = () => {
   const loadTrainings = async () => {
     setLoading(true);
     try {
-      const data = await trainingApiService.getTrainingHistory('default-user');
+      const data = await authTrainingApiService.getTrainingHistory();
       setTrainings(data);
     } catch (error: any) {
       console.error('Failed to load training history:', error);

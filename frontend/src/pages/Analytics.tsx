@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, BarChart, Bar, LabelList } from 'recharts';
-import { trainingApiService } from '../services/trainingApi';
+import { authTrainingApiService } from '../services/authTrainingApi';
 
 interface AnalyticsData {
   totalSessions: number;
@@ -27,7 +27,7 @@ export const Analytics: React.FC = () => {
   const loadAnalytics = async () => {
     try {
       setLoading(true);
-      const data = await trainingApiService.getAnalytics();
+      const data = await authTrainingApiService.getAnalytics();
       setAnalytics(data);
       setError(null);
     } catch (error: any) {

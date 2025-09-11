@@ -7,6 +7,7 @@ import * as fsSync from 'fs';
 const path = require('path');
 import { config } from '../utils/config';
 import { logger } from '../utils/logger';
+import { MLOperationResult } from '../types/database';
 
 class MLClient {
   private baseUrl: string;
@@ -157,12 +158,24 @@ class MLClient {
     });
   }
 
-  async getTranscription(filePath: string): Promise<any[]> {
+  async getTranscription(filePath: string): Promise<MLOperationResult<any[]>> {
     const startTime = Date.now();
     // verify converted WAV file exists and is readable before sending
     
     // prepare audio file (convert to WAV if needed)
     const wavPath = await this.prepareAudioFile(filePath);
+    
+    // analyze audio duration for debugging
+    const originalDuration = await this.getAudioDuration(filePath);
+    const wavDuration = filePath !== wavPath ? await this.getAudioDuration(wavPath) : originalDuration;
+    
+    logger.info('MLClient', 'Audio duration analysis completed', {
+      originalFile: filePath.split('/').pop(),
+      wavFile: wavPath.split('/').pop(),
+      originalDurationSeconds: originalDuration,
+      wavDurationSeconds: wavDuration,
+      durationMatch: Math.abs(originalDuration - wavDuration) < 0.1
+    });
     
     // verify converted WAV file exists and is readable before sending
     if (!fsSync.existsSync(wavPath)) {
@@ -176,6 +189,15 @@ class MLClient {
     if (fileSize === 0) {
       logger.error('MLClient', 'Converted file is empty', { wavPath, size: 0 });
       throw new Error(`Converted file is empty: ${wavPath}`);
+    }
+    
+    if (fileSize < 1024) { // less than 1KB is likely corrupted
+      logger.error('MLClient', 'Converted WAV file suspiciously small', { 
+        wavPath, 
+        size: fileSize,
+        originalPath: filePath 
+      });
+      throw new Error(`Converted WAV file too small (${fileSize} bytes), likely corrupted`);
     }
     
     // Perform health check and log connection attempt
@@ -226,50 +248,59 @@ class MLClient {
       });
       
       if (!transcriptionData || transcriptionData.length === 0) {
-        logger.warn('MLClient', 'Empty transcription received, using mock data', {
+        logger.error('MLClient', 'Empty transcription received from ML service', {
           responseData: JSON.stringify(transcriptionData),
           responseHeaders: transcribeResponse.headers
         });
         
-        // generate mock transcription data for 30 seconds
-        const mockData = this.generateMockTranscription();
-        logger.info('MLClient', 'Mock transcription generated', {
-          segments: mockData.length,
-          duration: mockData[mockData.length - 1].end
-        });
-        return mockData;
+        return {
+          success: false,
+          error: {
+            type: 'INVALID_RESPONSE',
+            message: 'ML service returned empty transcription',
+            httpStatus: transcribeResponse.status,
+            retryable: true
+          }
+        };
       }
       
-      return transcriptionData;
+      return {
+        success: true,
+        data: transcriptionData
+      };
 
     } catch (error: any) {
-      this.logNetworkError('transcription', this.endpoints.transcription, error, {
+      // enhanced error logging with ML service response details
+      const errorDetails = {
         file_size_kb: Math.round(fileSize / 1024),
-        fallback_used: true
-      }, startTime);
+        ml_response_status: error.response?.status,
+        ml_response_data: error.response?.data ? JSON.stringify(error.response.data).substring(0, 500) : 'no response data',
+        ml_response_headers: error.response?.headers ? Object.keys(error.response.headers) : [],
+        file_exists_before_send: fsSync.existsSync(wavPath),
+        file_size_before_send: fsSync.existsSync(wavPath) ? fsSync.statSync(wavPath).size : 0
+      };
       
-      // always return mock data on error to keep the flow working
-      const mockData = this.generateMockTranscription();
-      logger.info('MLClient', 'Returning mock transcription due to ML service error', {
-        segments: mockData.length,
-        errorCode: error.code
-      });
-      return mockData;
-    } finally {
-      // cleanup temporary WAV file if it was created
-      if (wavPath !== filePath) {
-        try {
-          await fs.unlink(wavPath);
-          logger.debug('MLClient', 'Temporary WAV file cleaned up', { wavPath });
-        } catch (cleanupError: any) {
-          logger.warn('MLClient', 'Failed to cleanup temporary WAV file', { wavPath, error: cleanupError.message });
+      this.logNetworkError('transcription', this.endpoints.transcription, error, errorDetails, startTime);
+      
+      return {
+        success: false,
+        error: {
+          type: this.mapErrorToType(error),
+          message: error.message || 'Transcription request failed',
+          httpStatus: error.response?.status,
+          retryable: this.isRetryableError(error)
         }
+      };
+    } finally {
+      // DEBUG: keep WAV files for debugging duration issues
+      if (wavPath !== filePath) {
+        logger.info('MLClient', 'Preserving WAV file for debugging', { wavPath, originalFile: filePath });
       }
     }
   }
 
 
-  async getMetrics(filePath: string, transcriptionData: any[]): Promise<any | null> {
+  async getMetrics(filePath: string, transcriptionData: any[]): Promise<MLOperationResult<any>> {
     const startTime = Date.now();
     // verify converted WAV file exists and is readable before sending
     
@@ -319,11 +350,14 @@ class MLClient {
         fileSizeKB: Math.round(fileSize / 1024)
       });
       
-      return processedData;
+      return {
+        success: true,
+        data: processedData
+      };
 
     } catch (error: any) {
       const duration = Date.now() - startTime;
-      logger.error('MLClient', 'Speech metrics failed, using mock data', {
+      logger.error('MLClient', 'Speech metrics failed', {
         duration: `${duration}ms`,
         fileSizeKB: Math.round(fileSize / 1024),
         endpoint: '/api/v1/speech/get_speech_metrics',
@@ -332,34 +366,25 @@ class MLClient {
         isTimeout: error.code === 'ECONNABORTED' || duration >= 120000
       });
       
-      // return mock metrics on error
-      const mockMetrics = {
-        pace_rate: 120.5,
-        pace_mark: 7.2,
-        emotion_mark: 6.8,
-        avg_sentences_len: 12.3
-      };
-      
-      logger.info('MLClient', 'Returning mock metrics due to ML service error', {
-        errorCode: error.code
-      });
-      
-      return mockMetrics;
-    } finally {
-      // cleanup temporary WAV file if it was created
-      if (wavPath !== filePath) {
-        try {
-          await fs.unlink(wavPath);
-          logger.debug('MLClient', 'Temporary WAV file cleaned up', { wavPath });
-        } catch (cleanupError: any) {
-          logger.warn('MLClient', 'Failed to cleanup temporary WAV file', { wavPath, error: cleanupError.message });
+      return {
+        success: false,
+        error: {
+          type: this.mapErrorToType(error),
+          message: error.message || 'Speech metrics request failed',
+          httpStatus: error.response?.status,
+          retryable: this.isRetryableError(error)
         }
+      };
+    } finally {
+      // DEBUG: keep WAV files for debugging duration issues
+      if (wavPath !== filePath) {
+        logger.info('MLClient', 'Preserving WAV file for debugging', { wavPath, originalFile: filePath });
       }
     }
   }
 
 
-  async getPitchAnalysis(text: string): Promise<any | null> {
+  async getPitchAnalysis(text: string): Promise<MLOperationResult<any>> {
     const startTime = Date.now();
     
     // Perform health check and log connection attempt
@@ -389,11 +414,19 @@ class MLClient {
       
       // check for empty or invalid response
       if (!response.data || Object.keys(response.data).length === 0) {
-        logger.warn('MLClient', 'Empty text analytics response, using mock data', {
+        logger.error('MLClient', 'Empty text analytics response from ML service', {
           duration: `${duration}ms`,
           responseData: JSON.stringify(response.data)
         });
-        return this.generateMockPitchAnalysis(text);
+        return {
+          success: false,
+          error: {
+            type: 'INVALID_RESPONSE',
+            message: 'ML service returned empty text analytics',
+            httpStatus: response.status,
+            retryable: true
+          }
+        };
       }
       
       // process text analytics response to fix data quality issues
@@ -424,30 +457,38 @@ class MLClient {
         unclarity_moments_count: processedData.unclarity_moments?.length || 0
       });
       
-      return convertedData;
+      return {
+        success: true,
+        data: convertedData
+      };
     } catch (error: any) {
       const duration = Date.now() - startTime;
-      const isServerError = error.response?.status >= 400;
       
-      logger.error('MLClient', 'Text analytics failed, using mock data', {
+      logger.error('MLClient', 'Text analytics failed', {
         duration: `${duration}ms`,
         textLength: text.length,
         errorStatus: error.response?.status,
-        isServerError,
         message: error.message
       });
       
-      // return mock data instead of null for any error
-      return this.generateMockPitchAnalysis(text);
+      return {
+        success: false,
+        error: {
+          type: this.mapErrorToType(error),
+          message: error.message || 'Text analytics request failed',
+          httpStatus: error.response?.status,
+          retryable: this.isRetryableError(error)
+        }
+      };
     }
   }
 
-  async generateQuestions(text: string, questionCount: number = 3): Promise<string[] | null> {
+  async generateQuestions(text: string, questionCount: number = 3): Promise<MLOperationResult<string[]>> {
     return this.generateQuestionsWithRetry(text, questionCount, 2); // retry up to 2 times
   }
 
   // question generation with retry logic (due to frequent 500 errors in ML API analysis)
-  private async generateQuestionsWithRetry(text: string, questionCount: number, maxRetries: number): Promise<string[] | null> {
+  private async generateQuestionsWithRetry(text: string, questionCount: number, maxRetries: number): Promise<MLOperationResult<string[]>> {
     let lastError: any = null;
     
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -487,13 +528,21 @@ class MLClient {
         
         // check for empty questions array
         if (!questions || questions.length === 0) {
-          logger.warn('MLClient', 'Empty questions response, using mock data', {
+          logger.error('MLClient', 'Empty questions response from ML service', {
             duration: `${duration}ms`,
             requestedCount: questionCount,
             responseData: JSON.stringify(response.data),
             attempt: attempt + 1
           });
-          return this.generateMockQuestions(text, questionCount);
+          return {
+            success: false,
+            error: {
+              type: 'INVALID_RESPONSE',
+              message: 'ML service returned empty questions',
+              httpStatus: response.status,
+              retryable: true
+            }
+          };
         }
         
         logger.info('MLClient', 'Questions generated successfully', { 
@@ -504,7 +553,10 @@ class MLClient {
           succeededAfterRetries: isRetry
         });
         
-        return questions;
+        return {
+          success: true,
+          data: questions
+        };
         
       } catch (error: any) {
         const duration = Date.now() - startTime;
@@ -534,7 +586,7 @@ class MLClient {
           await new Promise(resolve => setTimeout(resolve, waitTime));
           continue;
         } else {
-          logger.error('MLClient', 'Question generation failed after retries, using mock data', {
+          logger.error('MLClient', 'Question generation failed after retries', {
             duration: `${duration}ms`,
             textLength: text.length,
             requestedCount: questionCount,
@@ -549,8 +601,16 @@ class MLClient {
       }
     }
     
-    // return mock questions if all retries failed
-    return this.generateMockQuestions(text, questionCount);
+    // return error if all retries failed
+    return {
+      success: false,
+      error: {
+        type: this.mapErrorToType(lastError),
+        message: lastError?.message || 'Questions generation failed after retries',
+        httpStatus: lastError?.response?.status,
+        retryable: false // all retries exhausted
+      }
+    };
   }
 
   async healthCheck(): Promise<boolean> {
@@ -576,7 +636,7 @@ class MLClient {
     }
   }
 
-  async getPresentationFeedback(text: string, presentationFile?: string): Promise<any | null> {
+  async getPresentationFeedback(text: string, presentationFile?: string): Promise<MLOperationResult<any>> {
     const startTime = Date.now();
     try {
       logger.info('MLClient', 'Starting presentation feedback analysis', {
@@ -608,11 +668,19 @@ class MLClient {
       
       // check for empty or invalid response
       if (!response.data || Object.keys(response.data).length === 0) {
-        logger.warn('MLClient', 'Empty presentation feedback response, using mock data', {
+        logger.error('MLClient', 'Empty presentation feedback response from ML service', {
           duration: `${duration}ms`,
           responseData: JSON.stringify(response.data)
         });
-        return this.generateMockPresentationFeedback(text);
+        return {
+          success: false,
+          error: {
+            type: 'INVALID_RESPONSE',
+            message: 'ML service returned empty presentation feedback',
+            httpStatus: response.status,
+            retryable: true
+          }
+        };
       }
       
       logger.info('MLClient', 'Presentation feedback completed successfully', {
@@ -624,21 +692,29 @@ class MLClient {
         has_feedback: !!response.data.feedback
       });
       
-      return response.data;
+      return {
+        success: true,
+        data: response.data
+      };
     } catch (error: any) {
       const duration = Date.now() - startTime;
-      const isServerError = error.response?.status >= 400;
       
-      logger.error('MLClient', 'Presentation feedback failed, using mock data', {
+      logger.error('MLClient', 'Presentation feedback failed', {
         duration: `${duration}ms`,
         textLength: text.length,
         errorStatus: error.response?.status,
-        isServerError,
         message: error.message
       });
       
-      // return mock data instead of null for any error
-      return this.generateMockPresentationFeedback(text);
+      return {
+        success: false,
+        error: {
+          type: this.mapErrorToType(error),
+          message: error.message || 'Presentation feedback request failed',
+          httpStatus: error.response?.status,
+          retryable: this.isRetryableError(error)
+        }
+      };
     }
   }
 
@@ -820,6 +896,72 @@ class MLClient {
     return wavPath;
   }
   
+  // get audio duration using ffprobe
+  private async getAudioDuration(audioPath: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const args = [
+        '-v', 'quiet',
+        '-show_entries', 'format=duration',
+        '-of', 'csv=p=0',
+        audioPath
+      ];
+      
+      logger.debug('MLClient', 'Getting audio duration with ffprobe', {
+        command: 'ffprobe',
+        args: args.join(' '),
+        file: audioPath.split('/').pop()
+      });
+      
+      const ffprobe = spawn('ffprobe', args);
+      
+      let stdout = '';
+      let stderr = '';
+      
+      ffprobe.stdout.on('data', (data: Buffer) => {
+        stdout += data.toString();
+      });
+      
+      ffprobe.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString();
+      });
+      
+      ffprobe.on('close', (code: number) => {
+        if (code === 0) {
+          const duration = parseFloat(stdout.trim());
+          if (isNaN(duration)) {
+            logger.warn('MLClient', 'Failed to parse audio duration', { 
+              stdout, 
+              stderr: stderr.substring(0, 200),
+              file: audioPath.split('/').pop()
+            });
+            resolve(0);
+          } else {
+            logger.info('MLClient', 'Audio duration retrieved successfully', {
+              duration: `${duration.toFixed(2)}s`,
+              file: audioPath.split('/').pop()
+            });
+            resolve(duration);
+          }
+        } else {
+          logger.error('MLClient', 'ffprobe failed to get duration', {
+            exitCode: code,
+            stderr: stderr.substring(0, 200),
+            file: audioPath.split('/').pop()
+          });
+          resolve(0); // return 0 on error rather than rejecting
+        }
+      });
+      
+      ffprobe.on('error', (error: any) => {
+        logger.error('MLClient', 'ffprobe process error', {
+          error: error.message,
+          file: audioPath.split('/').pop()
+        });
+        resolve(0); // return 0 on error rather than rejecting
+      });
+    });
+  }
+  
   // convert audio file to WAV format using FFmpeg
   private async convertToWav(inputPath: string, outputPath: string): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -995,6 +1137,27 @@ class MLClient {
     return 4;                    // too fast
 
     // rate 85.71 (from analysis) should map to 5 (slow but acceptable)
+  }
+
+  // helper methods for error handling
+  private mapErrorToType(error: any): 'NETWORK_ERROR' | 'SERVICE_ERROR' | 'TIMEOUT' | 'INVALID_RESPONSE' {
+    if (error.response?.status >= 500) return 'SERVICE_ERROR';
+    if (error.response?.status >= 400) return 'INVALID_RESPONSE';
+    if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') return 'TIMEOUT';
+    if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') return 'NETWORK_ERROR';
+    return 'NETWORK_ERROR';
+  }
+
+  private isRetryableError(error: any): boolean {
+    // network errors are retryable
+    if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND' || error.code === 'ECONNRESET') return true;
+    // timeouts are retryable
+    if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') return true;
+    // 5xx server errors are retryable
+    if (error.response?.status >= 500) return true;
+    // 4xx client errors are generally not retryable, except for some specific cases
+    if (error.response?.status === 429) return true; // rate limiting
+    return false;
   }
 }
 

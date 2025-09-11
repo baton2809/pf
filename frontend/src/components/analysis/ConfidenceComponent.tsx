@@ -2,7 +2,7 @@ import React from 'react';
 
 interface ConfidenceComponentProps {
   hesitantPhrases?: string[];
-  fillerWords?: Array<{word: string, count: number}>;
+  fillerWords?: any[]; // backend returns empty array, keeping flexible for future
   totalWords?: number; // for calculating percentages
 }
 
@@ -12,35 +12,31 @@ export const ConfidenceComponent: React.FC<ConfidenceComponentProps> = ({
   totalWords = 500 // default estimate
 }) => {
   const getFillerWordsData = (): Array<{word: string, count: number, percentage: number}> => {
-    if (fillerWords.length > 0) {
-      return fillerWords.slice(0, 3).map(item => ({
-        ...item,
-        percentage: (item.count / totalWords) * 100
-      }));
+    if (fillerWords && fillerWords.length > 0) {
+      return fillerWords.slice(0, 3).map(item => {
+        // Handle both old format {word: string, count: number} and new format (strings)
+        if (typeof item === 'string') {
+          return { word: item, count: 1, percentage: (1 / totalWords) * 100 };
+        }
+        // assume it's {word, count} object
+        return {
+          word: item.word || String(item),
+          count: item.count || 1,
+          percentage: ((item.count || 1) / totalWords) * 100
+        };
+      });
     }
-    
-    // mock data for demonstration
-    return [
-      { word: "эм", count: 4, percentage: 0.8 },
-      { word: "ну", count: 3, percentage: 0.6 },
-      { word: "значит", count: 2, percentage: 0.4 }
-    ];
+    return [];
   };
 
   const getHesitantPhrasesData = (): Array<{phrase: string, timestamp?: string}> => {
-    if (hesitantPhrases.length > 0) {
+    if (hesitantPhrases && hesitantPhrases.length > 0) {
       return hesitantPhrases.slice(0, 4).map(phrase => ({
         phrase,
         timestamp: undefined // could be added later
       }));
     }
-    
-    // mock data for demonstration
-    return [
-      { phrase: "я не уверен, что это правильно", timestamp: "2:15" },
-      { phrase: "возможно, стоит подумать", timestamp: "4:33" },
-      { phrase: "не знаю, как лучше объяснить", timestamp: "6:42" }
-    ];
+    return [];
   };
 
   const fillerWordsData = getFillerWordsData();
@@ -285,7 +281,10 @@ export const ConfidenceComponent: React.FC<ConfidenceComponentProps> = ({
           color: '#6c757d',
           padding: '20px'
         }}>
-          <p>Анализ уверенности недоступен</p>
+          <p>Анализ уверенности пока недоступен</p>
+          <p style={{ fontSize: '12px', marginTop: '8px' }}>
+            Данные появятся после завершения обработки ML сервисом
+          </p>
         </div>
       )}
     </div>

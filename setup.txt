@@ -1,0 +1,81 @@
+1. УСТАНОВКА NGROK
+
+- установи ngrok через homebrew: brew install ngrok
+- зарегистрируйся на ngrok.com и получи authtoken
+- выполни: ngrok config add-authtoken YOUR_AUTHTOKEN (смотри на сайте, там есть целиком строчка кода)
+- запусти туннель: ngrok http https://localhost:3000 --host-header=localhost:3000 --scheme=https (увидишь что-то аля https://{abc123}.ngrok-free.app)
+
+2. НАСТРОЙКА GOOGLE OAUTH
+
+- зайди в Google Cloud Console - console.cloud.google.com
+- создай новый проект
+- включи Google+ API
+- перейди в "Credentials" -> "Create Credentials" -> "OAuth 2.0 Client IDs"
+- выбери "Web application"
+- добавь Authorized JavaScript origins:
+   - https://localhost:3005
+   - https://{abc123}.ngrok-free.app - тот что ngrok показал выше в консоли
+- добавь Authorized redirect URIs:
+   - https://{abc123}.ngrok-free.app/api/auth/google/callback
+- cкопируй Client ID и Client Secret (понадобятся в .env)
+
+3. НАСТРОЙКА SSL СЕРТИФИКАТОВ
+
+- выполни: 
+chmod +x setup-ssl.sh
+./setup-ssl.sh
+
+- для тестирования из мобилы
+- подключись к той же сети вай-фай
+- выполни: ifconfig | grep 192 (запомни ip это твой {local_ip})
+
+4. НАСТРОЙКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ
+
+- настрой .env:
+GOOGLE_CLIENT_ID={}
+GOOGLE_CLIENT_SECRET={}
+GOOGLE_REDIRECT_URI=https://{abc123}.ngrok-free.app/api/auth/google/callback
+
+FRONTEND_URL=https://{local_ip}:3005
+REACT_APP_API_URL=https://{local_ip}.ngrok-free.app
+
+JWT_SECRET=свой_32_символа # сгенерь если потребует
+
+5. ЗАПУСК ПРОЕКТА
+
+- убедись что ngrok запущен и туннелирует порт 3000
+- выполни: ./scripts/dev-start.sh
+- для полной пересборки если меняли зависимости: ./scripts/dev-start.sh rebuild
+- проверь логи если нужно:
+  - ./scripts/dev-start.sh logs backend
+  - ./scripts/dev-start.sh logs frontend
+
+6. ДОСТУП К ПРИЛОЖЕНИЮ
+
+- локально с телефона: https://{local_ip}:3005
+- backend API: https://{abc123}.ngrok-free.app:3000/api или https://{abc123}.ngrok-free.app:3000/health
+
+7. ПРОВЕРКА РАБОТЫ
+
+- в декстопе - любой браузер (проверял chrome)
+- на iphone тестируй в chrome (safari не стабильно)
+- открой https://{local_ip}:3005
+- жми дополнительные настройки
+- перейти на сайт (жми)
+- должна открыться страница логина, попробуй авторизоваться через Google (остальное скипай) и пустить в роут создания тренировки
+- проверь логи: ./scripts/dev-start.sh logs backend
+- для бразуера декстопа принцип тот же: разрешай и игнорь все
+
+8. УСТРАНЕНИЕ ПРОБЛЕМ
+
+- если OAuth не работает - проверь redirect URI в Google Console
+- если SSL ошибки - переустанови сертификаты: ./setup-ssl.sh  
+- если контейнеры не запускаются - проверь .env файл
+
+9. СКРИПТЫ
+
+./scripts/dev-start.sh - основной запуск
+./scripts/dev-start.sh 1 - полная пересборка  
+./scripts/dev-start.sh clean - очистка всего
+./scripts/dev-start.sh logs [service] - просмотр логов
+./scripts/dev-start.sh status - статус сервисов

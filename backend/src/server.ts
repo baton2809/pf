@@ -4,12 +4,14 @@ import cors from '@fastify/cors';
 import fs from 'fs';
 import { config } from './utils/config';
 import { database } from './services/database';
+import { AuthService } from './services/auth-service';
 import { logger } from './utils/logger';
 import healthRoutes from './routes/health';
 import audioRoutes from './routes/audio';
 import authRoutes from './routes/auth';
 import trainingRoutes from './routes/training';
 import { analyticsRoutes } from './routes/analytics';
+import mlRetryRoutes from './routes/ml-retry';
 import { v4 as uuidv4 } from 'uuid';
 
 // SSL options
@@ -41,7 +43,7 @@ async function start() {
     await fastify.register(cors, {
       origin: true, // разрешаем все origins для разработки
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Audio-Format', 'X-Duration', 'Content-Length'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Audio-Format', 'X-Duration', 'Content-Length', 'ngrok-skip-browser-warning', 'Cache-Control'],
       credentials: false // disable credentials to avoid CORS conflicts with SSE
     });
 
@@ -61,8 +63,17 @@ async function start() {
       request.startTime = Date.now();
       request.requestId = uuidv4().substring(0, 8); // short ID for tracing
       
-      // debug multipart requests
-      if (request.url.includes('/api/audio/upload')) {
+      // debug SSE and multipart requests
+      if (request.url.includes('/events')) {
+        logger.info('SSE-DEBUG', `Incoming SSE request: ${request.method} ${request.url}`, {
+          method: request.method,
+          url: request.url,
+          headers: Object.keys(request.headers),
+          accept: request.headers.accept || 'none',
+          origin: request.headers.origin || 'none',
+          userAgent: request.headers['user-agent']?.substring(0, 50) || 'none'
+        });
+      } else if (request.url.includes('/api/audio/upload')) {
         logger.info('AudioUpload', `Incoming request: ${request.method} ${request.url}`, {
           method: request.method,
           url: request.url,
@@ -74,7 +85,7 @@ async function start() {
     });
 
     fastify.addHook('onResponse', async (request: any, reply) => {
-      const duration = Date.now() - request.startTime;
+      const duration = Date.now() - (request.startTime || Date.now());
       const { method, url } = request;
       const status = reply.statusCode;
       
@@ -101,12 +112,16 @@ async function start() {
     // initialize database
     await database.init();
 
+    // initialize auth service
+    const authService = new AuthService(database);
+
     // register routes
     await fastify.register(healthRoutes);
-    await fastify.register(authRoutes);
+    await fastify.register(authRoutes, { authService });
     await fastify.register(audioRoutes);
-    await fastify.register(trainingRoutes);
-    await fastify.register(analyticsRoutes, { prefix: '/api' });
+    await fastify.register(trainingRoutes, { authService });
+    await fastify.register(analyticsRoutes, { prefix: '/api', authService });
+    await fastify.register(mlRetryRoutes, { prefix: '/api/ml' });
 
     // start server
     await fastify.listen({ 

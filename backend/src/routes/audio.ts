@@ -128,18 +128,20 @@ const audioRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const transcriptText = session.mlResults.speech_segments.map(s => s.text).join(' ');
-      const questions = await mlClient.generateQuestions(transcriptText, question_count);
+      const questionsResult = await mlClient.generateQuestions(transcriptText, question_count);
 
-      if (!questions) {
-        return reply.code(500).send({ error: 'Failed to generate questions' });
+      if (!questionsResult.success || !questionsResult.data) {
+        return reply.code(500).send({ 
+          error: questionsResult.error?.message || 'Failed to generate questions' 
+        });
       }
 
       logger.info('AudioQuestions', 'Generated additional questions', { 
         sessionId: id, 
-        count: questions.length 
+        count: questionsResult.data!.length 
       });
       
-      return { questions };
+      return { questions: questionsResult.data! };
     } catch (error) {
       logger.error('AudioQuestions', 'Failed to generate questions', error);
       return reply.code(500).send({ error: 'Failed to generate questions' });

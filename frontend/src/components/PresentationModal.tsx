@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { trainingApiService } from '../services/trainingApi';
+import { useAuth } from '../context/AuthContext';
 
 interface PresentationModalProps {
   isOpen: boolean;
@@ -14,6 +14,7 @@ export const PresentationModal: React.FC<PresentationModalProps> = ({
   onClose, 
   onContinue 
 }) => {
+  const { trainingApi } = useAuth();
   const [dragActive, setDragActive] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -54,7 +55,7 @@ export const PresentationModal: React.FC<PresentationModalProps> = ({
     if (selectedFile) {
       setIsUploading(true);
       try {
-        const data = await trainingApiService.uploadPresentation(trainingId, selectedFile);
+        const data = await trainingApi.uploadPresentation(trainingId, selectedFile);
         onContinue(trainingId, data.hasPresentation);
       } catch (error: any) {
         console.error('Failed to upload presentation:', error);

@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PresentationModal } from '../components/PresentationModal';
-import { trainingApiService } from '../services/trainingApi';
+import { useAuth } from '../context/AuthContext';
 import { sessionTypeLabels, type TrainingType } from '../utils/trainingTypes';
 
 export const NewTrainingPage: React.FC = () => {
   const navigate = useNavigate();
+  const { trainingApi } = useAuth();
   const [title, setTitle] = useState('');
   const [type, setType] = useState<TrainingType>('presentation');
   const [isCreating, setIsCreating] = useState(false);
@@ -20,10 +21,9 @@ export const NewTrainingPage: React.FC = () => {
 
     setIsCreating(true);
     try {
-      const data = await trainingApiService.createTraining({
+      const data = await trainingApi.createTraining({
         title: title.trim(),
-        type,
-        userId: 'default-user' // todo: get from auth context
+        type
       });
 
       setTrainingId(data.trainingId);

@@ -50,11 +50,14 @@ services:
       - "0.0.0.0:3005:3005"
     environment:
       - HTTPS=true
-      - SSL_CRT_FILE=/app/ssl/cert.pem  
-      - SSL_KEY_FILE=/app/ssl/key.pem
+      - HTTPS_CRT_FILE=/app/ssl/cert.pem  
+      - HTTPS_KEY_FILE=/app/ssl/key.pem
+      - PORT=3005
+      - HOST=0.0.0.0
       - CHOKIDAR_USEPOLLING=true
       - WATCHPACK_POLLING=true
       - FAST_REFRESH=true
+      - REACT_APP_API_URL=${REACT_APP_API_URL}
     volumes:
       - ./frontend:/app
       - /app/node_modules

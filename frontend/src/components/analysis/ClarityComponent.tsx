@@ -3,7 +3,7 @@ import React from 'react';
 interface ClarityComponentProps {
   unclarityMoments?: string[];
   avgSentenceLength?: number;
-  repeatedWords?: Array<{word: string, count: number}>;
+  repeatedWords?: any[]; // backend returns empty array, keeping flexible for future
 }
 
 export const ClarityComponent: React.FC<ClarityComponentProps> = ({ 
@@ -23,21 +23,17 @@ export const ClarityComponent: React.FC<ClarityComponentProps> = ({
     return "сложно";
   };
 
-  // generate mock repeated words if none provided
-  const getRepeatedWordsData = (): Array<{word: string, count: number}> => {
-    if (repeatedWords.length > 0) return repeatedWords.slice(0, 5);
-    
-    // mock data for demonstration
-    return [
-      { word: "и", count: 12 },
-      { word: "вот", count: 8 },
-      { word: "значит", count: 6 },
-      { word: "ну", count: 5 },
-      { word: "как бы", count: 4 }
-    ];
-  };
-
-  const repeatedWordsData = getRepeatedWordsData();
+  // Backend currently returns empty array for filler_words
+  // If data structure changes in future, this will adapt
+  const repeatedWordsData = repeatedWords && repeatedWords.length > 0 
+    ? repeatedWords.slice(0, 5).map(item => {
+        // Handle both old format {word: string, count: number} and new format (strings)
+        if (typeof item === 'string') {
+          return { word: item, count: 1 }; // fallback for string format
+        }
+        return item; // assume it's {word, count} object
+      })
+    : [];
 
   return (
     <div className="card" style={{
@@ -217,13 +213,18 @@ export const ClarityComponent: React.FC<ClarityComponentProps> = ({
       )}
 
       {/* empty state */}
-      {unclarityMoments.length === 0 && repeatedWordsData.length === 0 && !avgSentenceLength && (
+      {(!unclarityMoments || unclarityMoments.length === 0) && 
+       (!repeatedWordsData || repeatedWordsData.length === 0) && 
+       !avgSentenceLength && (
         <div style={{
           textAlign: 'center',
           color: '#6c757d',
           padding: '20px'
         }}>
-          <p>Анализ ясности недоступен</p>
+          <p>Анализ ясности пока недоступен</p>
+          <p style={{ fontSize: '12px', marginTop: '8px' }}>
+            Данные появятся после завершения обработки ML сервисом
+          </p>
         </div>
       )}
     </div>
