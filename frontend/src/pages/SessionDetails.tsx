@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { trainingApiService } from '../services/trainingApi';
+import { logger } from '../utils/logger';
 
 // analysis components
 import { TranscriptionComponent } from '../components/analysis/TranscriptionComponent';
@@ -50,18 +51,24 @@ const SessionDetailsComponent: React.FC = () => {
 
   // SSE message handler - moved to top level
   const handleSSEMessage = useCallback((data: any) => {
-    console.log('[SessionDetails] SSE message received:', data);
-    console.log('[SessionDetails] SSE data details:', {
-      type: data.type,
-      progress: data.progress,
-      step: data.step,
-      status: data.status,
-      message: data.message
-    });
+    // only log important events, not every message
+    if (data.type === 'completed' || data.type === 'error' || data.type === 'transcription_completed') {
+      logger.critical('SessionDetails', `Session ${data.type}`, { 
+        sessionId: data.sessionId, 
+        type: data.type, 
+        progress: data.progress 
+      });
+    } else {
+      logger.debug('SessionDetails', 'SSE message received', { 
+        type: data.type, 
+        progress: data.progress, 
+        step: data.step 
+      });
+    }
     
     // only filter out messages with explicit sessionId that don't match
     if (data.sessionId && data.sessionId !== sessionId) {
-      console.warn('[SessionDetails] Received SSE message for different session, ignoring');
+      logger.warn('SessionDetails', 'Received SSE message for different session, ignoring');
       return;
     }
     
@@ -79,14 +86,12 @@ const SessionDetailsComponent: React.FC = () => {
         const metricsReady = areMetricsReady(data.progress, data.step);
         const analysisComplete = isAnalysisComplete(data.progress, data.status);
         
-        console.log('[SessionDetails] Component visibility check:', {
+        logger.debug('SessionDetails', 'Component visibility check', {
           transcriptionReady,
           metricsReady,
           analysisComplete,
-          progressCheck: data.progress >= 85,
-          stepCheck: data.step === 'parallel_processing_completed',
-          currentProgress: data.progress,
-          currentStep: data.step
+          progress: data.progress,
+          step: data.step
         });
         
         setComponentState({
@@ -97,7 +102,6 @@ const SessionDetailsComponent: React.FC = () => {
         break;
         
       case 'transcription_completed':
-        console.log('[SessionDetails] Transcription completed via SSE, setting segments:', data.segments?.length);
         if (data.segments && data.segments.length > 0) {
           setTranscriptionData(data.segments);
         }
@@ -105,7 +109,6 @@ const SessionDetailsComponent: React.FC = () => {
         break;
         
       case 'completed':
-        console.log('[SessionDetails] Analysis completed via SSE');
         if (data.results) {
           setAnalysisData(data.results);
           if (data.results.speech_segments) {
@@ -121,19 +124,19 @@ const SessionDetailsComponent: React.FC = () => {
         
         // close SSE connection on frontend side
         if (eventSourceRef.current) {
-          console.log('[SessionDetails] Closing SSE after completion');
+          logger.info('SessionDetails', 'Closing SSE after completion');
           eventSourceRef.current.close();
           eventSourceRef.current = null;
         }
         break;
         
       case 'error':
-        console.error('[SessionDetails] Processing error via SSE:', data.error);
+        logger.error('SessionDetails', 'Processing error via SSE', data.error);
         setError(data.error || 'Processing failed');
         break;
         
       case 'connection_closing':
-        console.log('[SessionDetails] SSE connection closing as expected');
+        logger.debug('SessionDetails', 'SSE connection closing as expected');
         if (eventSourceRef.current) {
           eventSourceRef.current.close();
           eventSourceRef.current = null;
@@ -141,7 +144,7 @@ const SessionDetailsComponent: React.FC = () => {
         break;
         
       default:
-        console.log('[SessionDetails] Unknown SSE message type:', data.type);
+        logger.debug('SessionDetails', 'Unknown SSE message type', { type: data.type });
     }
   }, [sessionId]);
 
@@ -340,20 +343,22 @@ const SessionDetailsComponent: React.FC = () => {
       )}
 
       {/* основное содержимое - компоненты как кирпичики */}
-      <div style={{ 
-        display: 'grid', 
-        gridTemplateColumns: 'repeat(2, 1fr)', 
-        gap: '20px',
-        gridAutoRows: 'min-content'
-      }}>
+      <div className="session-details-grid">
         {/* транскрипт - первый компонент */}
         <TranscriptionComponent 
           segments={transcriptionData || []}
           isLoading={!componentState.transcriptionReady && isLoadingInitialData}
         />
 
-        {/* Loading indicator when analysis not yet started */}
-        {!componentState.metricsReady && (
+        {/* Final score component - второй компонент (сразу после транскрипта) */}
+        {componentState.analysisComplete && analysisData ? (
+          <FinalScoreComponent 
+            overallScore={calculateOverallScore(analysisData)}
+            pitchMarks={analysisData.pitch_evaluation?.marks}
+            isLoading={false}
+          />
+        ) : !componentState.metricsReady ? (
+          /* Loading indicator when analysis not yet started */
           <div className="card" style={{
             padding: '20px 24px',
             textAlign: 'center'
@@ -388,7 +393,7 @@ const SessionDetailsComponent: React.FC = () => {
               }} />
             </div>
           </div>
-        )}
+        ) : null}
 
         {/* Analysis components - show when metrics are ready (85% progress) */}
         {componentState.metricsReady && analysisData && (
@@ -415,15 +420,6 @@ const SessionDetailsComponent: React.FC = () => {
               totalWords={transcriptionData ? estimateTotalWords(transcriptionData) : 500}
             />
           </>
-        )}
-
-        {/* Final score component - show when analysis is complete (100%) */}
-        {componentState.analysisComplete && analysisData && (
-          <FinalScoreComponent 
-            overallScore={calculateOverallScore(analysisData)}
-            pitchMarks={analysisData.pitch_evaluation?.marks}
-            isLoading={false}
-          />
         )}
       </div>
 

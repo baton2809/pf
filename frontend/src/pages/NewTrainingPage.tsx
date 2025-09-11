@@ -46,24 +46,13 @@ export const NewTrainingPage: React.FC = () => {
     <div className="page-container">
       <h2>Создать новую тренировку</h2>
       
-      <div style={{ 
-        display: 'grid', 
-        gridTemplateColumns: '1fr 1fr', 
-        gap: '32px', 
-        alignItems: 'start',
-        marginTop: '24px'
-      }}>
+      <div className="training-grid">
         {/* левая колонка - форма создания */}
         <div className="card">
           <h3 style={{ marginBottom: '20px' }}>Параметры тренировки</h3>
           
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ 
-              display: 'block', 
-              fontSize: '14px', 
-              color: '#5f6368', 
-              marginBottom: '8px' 
-            }}>
+          <div className="form-group">
+            <label className="form-label">
               Название тренировки *
             </label>
             <input
@@ -71,36 +60,18 @@ export const NewTrainingPage: React.FC = () => {
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Например: Презентация квартального отчета"
-              style={{
-                width: '100%',
-                padding: '12px',
-                border: '1px solid #dadce0',
-                borderRadius: '4px',
-                fontSize: '14px'
-              }}
+              className="form-input"
             />
           </div>
 
-          <div style={{ marginBottom: '24px' }}>
-            <label style={{ 
-              display: 'block', 
-              fontSize: '14px', 
-              color: '#5f6368', 
-              marginBottom: '8px' 
-            }}>
+          <div className="form-group">
+            <label className="form-label">
               Тип тренировки
             </label>
             <select
               value={type}
               onChange={(e) => setType(e.target.value as TrainingType)}
-              style={{
-                width: '100%',
-                padding: '12px',
-                border: '1px solid #dadce0',
-                borderRadius: '4px',
-                fontSize: '14px',
-                backgroundColor: 'white'
-              }}
+              className="form-select"
             >
               {Object.entries(sessionTypeLabels).map(([key, label]) => (
                 <option key={key} value={key}>{label}</option>
@@ -111,17 +82,7 @@ export const NewTrainingPage: React.FC = () => {
           <button
             onClick={handleCreateTraining}
             disabled={isCreating || !title.trim()}
-            style={{
-              width: '100%',
-              padding: '12px 24px',
-              backgroundColor: isCreating || !title.trim() ? '#f1f3f4' : '#1a73e8',
-              color: isCreating || !title.trim() ? '#5f6368' : 'white',
-              border: 'none',
-              borderRadius: '4px',
-              fontSize: '14px',
-              fontWeight: 500,
-              cursor: isCreating || !title.trim() ? 'not-allowed' : 'pointer'
-            }}
+            className="form-button primary"
           >
             {isCreating ? 'Создание...' : 'Создать тренировку'}
           </button>

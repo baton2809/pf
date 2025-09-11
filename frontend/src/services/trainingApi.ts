@@ -1,3 +1,5 @@
+import { API_URL } from '../config.js';
+
 export interface Training {
   id: string;
   title: string;
@@ -66,7 +68,7 @@ export interface ProgressEvent {
 }
 
 class TrainingApiService {
-  private baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:3000';
+  private baseUrl = API_URL;
 
   async createTraining(request: CreateTrainingRequest): Promise<CreateTrainingResponse> {
     const response = await fetch(`${this.baseUrl}/api/training/create`, {

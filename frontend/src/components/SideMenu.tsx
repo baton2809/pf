@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
-import { NavLink } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
 
 export const SideMenu: React.FC = () => {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const location = useLocation();
 
   const getIcon = (path: string) => {
     switch (path) {
@@ -60,18 +62,75 @@ export const SideMenu: React.FC = () => {
     { path: '/settings', label: 'Настройки аккаунта' },
   ];
 
+  // detect mobile device
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // close menu on route change (mobile only)
+  useEffect(() => {
+    if (isMobile) {
+      setIsExpanded(false);
+    }
+  }, [location, isMobile]);
+
+  const handleMenuToggle = () => {
+    setIsExpanded(!isExpanded);
+  };
+
+  const handleMenuItemClick = () => {
+    if (isMobile) {
+      setIsExpanded(false);
+    }
+  };
+
   return (
     <>
+      {/* hamburger button for mobile */}
+      {isMobile && (
+        <button 
+          className="hamburger-menu"
+          onClick={handleMenuToggle}
+          aria-label="Toggle menu"
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <line x1="3" y1="6" x2="21" y2="6"/>
+            <line x1="3" y1="12" x2="21" y2="12"/>
+            <line x1="3" y1="18" x2="21" y2="18"/>
+          </svg>
+        </button>
+      )}
+      
       <div 
-        className={`side-menu ${isExpanded ? 'expanded' : ''}`}
-        onMouseEnter={() => setIsExpanded(true)}
-        onMouseLeave={() => setIsExpanded(false)}
+        className={`side-menu ${isExpanded ? 'expanded' : ''} ${isMobile ? 'mobile' : ''}`}
+        onMouseEnter={() => !isMobile && setIsExpanded(true)}
+        onMouseLeave={() => !isMobile && setIsExpanded(false)}
       >
         <div className="menu-header">
           <div className="logo-container">
             <div className="logo-icon">PF</div>
             {isExpanded && <span className="logo-text">PitchForge</span>}
           </div>
+          {/* close button for mobile */}
+          {isMobile && isExpanded && (
+            <button 
+              className="menu-close-btn"
+              onClick={() => setIsExpanded(false)}
+              aria-label="Close menu"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          )}
         </div>
         
         <nav className="menu-nav">
@@ -80,6 +139,7 @@ export const SideMenu: React.FC = () => {
               key={item.path}
               to={item.path}
               className={({ isActive }) => `menu-item ${isActive ? 'active' : ''}`}
+              onClick={handleMenuItemClick}
             >
               <div className="menu-icon">
                 {getIcon(item.path)}

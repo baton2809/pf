@@ -8,7 +8,8 @@ export const config = {
     password: process.env.POSTGRES_PASSWORD || 'dev_password'
   },
   mlService: {
-    url: process.env.PITCH_ML_SERVICE_URL || 'http://89.169.190.223:4000'
+    url: process.env.PITCH_ML_SERVICE_URL || 'http://89.169.190.223:4000',
+    timeout: parseInt(process.env.ML_SERVICE_TIMEOUT || '30000')
   },
   uploads: {
     path: './uploads'

@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import multipart from '@fastify/multipart';
 import cors from '@fastify/cors';
+import fs from 'fs';
 import { config } from './utils/config';
 import { database } from './services/database';
 import { logger } from './utils/logger';
@@ -11,16 +12,34 @@ import trainingRoutes from './routes/training';
 import { analyticsRoutes } from './routes/analytics';
 import { v4 as uuidv4 } from 'uuid';
 
-// create fastify instance
+// SSL options
+let httpsOptions = {};
+try {
+  if (fs.existsSync('./ssl/key.pem') && fs.existsSync('./ssl/cert.pem')) {
+    httpsOptions = {
+      https: {
+        key: fs.readFileSync('./ssl/key.pem'),
+        cert: fs.readFileSync('./ssl/cert.pem')
+      }
+    };
+    logger.info('Server', 'SSL certificates loaded, starting HTTPS server');
+  }
+} catch (error) {
+  logger.warn('Server', 'SSL certificates not found, starting HTTP server');
+}
+
+// create fastify instance with SSL if available
 const fastify = Fastify({
-  logger: false
+  logger: false,
+  ...httpsOptions
 });
+
 
 async function start() {
   try {
     // register plugins
     await fastify.register(cors, {
-      origin: ['http://localhost:3005', 'http://localhost:3000'], // specific origins for Docker
+      origin: true, // разрешаем все origins для разработки
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD'],
       allowedHeaders: ['Content-Type', 'Authorization', 'X-Audio-Format', 'X-Duration', 'Content-Length'],
       credentials: false // disable credentials to avoid CORS conflicts with SSE

@@ -10,10 +10,151 @@ import { logger } from '../utils/logger';
 
 class MLClient {
   private baseUrl: string;
+  private endpoints: { [key: string]: string };
+  private timeout: number;
+
+  private logNetworkError(operation: string, endpoint: string, error: any, context: any = {}, startTime?: number) {
+    const duration = startTime ? Date.now() - startTime : undefined;
+    const fullUrl = `${this.baseUrl}${endpoint}`;
+    
+    const errorInfo = {
+      operation,
+      url: fullUrl,
+      error_type: this.getErrorType(error),
+      error_message: error.message,
+      http_status: error.response?.status,
+      error_code: error.code,
+      duration_ms: duration,
+      network_info: {
+        timeout_ms: this.timeout,
+        is_timeout: error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT',
+        is_connection_refused: error.code === 'ECONNREFUSED',
+        is_network_error: !error.response && error.code,
+        dns_resolution: error.code === 'ENOTFOUND' ? 'failed' : 'unknown'
+      },
+      ...context
+    };
+
+    logger.error('MLClient', `${operation} failed`, errorInfo);
+  }
+
+  private getErrorType(error: any): string {
+    if (error.response?.status >= 500) return 'SERVER_ERROR';
+    if (error.response?.status >= 400) return 'CLIENT_ERROR';
+    if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') return 'TIMEOUT';
+    if (error.code === 'ECONNREFUSED') return 'CONNECTION_REFUSED';
+    if (error.code === 'ENOTFOUND') return 'DNS_RESOLUTION_FAILED';
+    if (error.code === 'ECONNRESET') return 'CONNECTION_RESET';
+    if (!error.response && error.code) return 'NETWORK_ERROR';
+    return 'UNKNOWN_ERROR';
+  }
+
+  private async performHealthCheck(): Promise<any> {
+    const healthUrl = `${this.baseUrl}/api/v1/info/health_check`;
+    const startTime = Date.now();
+    
+    try {
+      const response = await axios.get(healthUrl, {
+        timeout: 5000 // shorter timeout for health check
+      });
+      
+      const duration = Date.now() - startTime;
+      
+      logger.info('MLClient', 'Health check successful', {
+        url: healthUrl,
+        status: response.status,
+        duration_ms: duration,
+        response_data: response.data,
+        service_available: true
+      });
+      
+      return {
+        healthy: true,
+        status: response.status,
+        data: response.data,
+        duration_ms: duration
+      };
+      
+    } catch (error: any) {
+      const duration = Date.now() - startTime;
+      
+      logger.error('MLClient', 'Health check failed', {
+        url: healthUrl,
+        error_type: this.getErrorType(error),
+        error_message: error.message,
+        error_code: error.code,
+        http_status: error.response?.status,
+        duration_ms: duration,
+        network_diagnosis: {
+          is_dns_issue: error.code === 'ENOTFOUND',
+          is_connection_refused: error.code === 'ECONNREFUSED',
+          is_timeout: error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT',
+          is_network_unreachable: error.code === 'ENETUNREACH',
+          port_accessible: error.code !== 'ECONNREFUSED'
+        }
+      });
+      
+      return {
+        healthy: false,
+        error: error.message,
+        error_type: this.getErrorType(error),
+        error_code: error.code,
+        duration_ms: duration
+      };
+    }
+  }
+
+  private async logServiceConnectionAttempt(operation: string, endpoint: string, context: any = {}) {
+    logger.info('MLClient', `Attempting ${operation} connection`, {
+      operation,
+      target_url: `${this.baseUrl}${endpoint}`,
+      base_url: this.baseUrl,
+      endpoint,
+      network_check: 'pending',
+      timeout_ms: this.timeout,
+      ...context
+    });
+
+    // Perform health check before main operation
+    const healthResult = await this.performHealthCheck();
+    
+    if (!healthResult.healthy) {
+      logger.warn('MLClient', `${operation} attempted while ML service unhealthy`, {
+        operation,
+        target_url: `${this.baseUrl}${endpoint}`,
+        health_check_result: healthResult,
+        proceeding_anyway: true
+      });
+    } else {
+      logger.info('MLClient', `${operation} proceeding with healthy ML service`, {
+        operation,
+        health_check_duration: healthResult.duration_ms,
+        service_status: healthResult.status
+      });
+    }
+
+    return healthResult;
+  }
 
   constructor() {
     this.baseUrl = config.mlService.url;
-    logger.info('MLClient', 'Initialized', { url: this.baseUrl });
+    this.timeout = config.mlService.timeout || 30000;
+    this.endpoints = {
+      transcription: '/api/v1/speech/transcribe_speech',
+      speechMetrics: '/api/v1/speech/get_speech_metrics', 
+      textAnalytics: '/api/v1/text/get_text_analytics',
+      questions: '/api/v1/text/get_questions_text_presentation'
+    };
+    
+    logger.info('MLClient', 'Service configuration initialized', {
+      baseUrl: this.baseUrl,
+      endpoints: this.endpoints,
+      timeoutMs: this.timeout,
+      fullUrls: Object.keys(this.endpoints).reduce((acc, key) => {
+        acc[key] = `${this.baseUrl}${this.endpoints[key]}`;
+        return acc;
+      }, {} as { [key: string]: string })
+    });
   }
 
   async getTranscription(filePath: string): Promise<any[]> {
@@ -36,6 +177,12 @@ class MLClient {
       logger.error('MLClient', 'Converted file is empty', { wavPath, size: 0 });
       throw new Error(`Converted file is empty: ${wavPath}`);
     }
+    
+    // Perform health check and log connection attempt
+    await this.logServiceConnectionAttempt('transcription', this.endpoints.transcription, {
+      file_size_kb: Math.round(fileSize / 1024),
+      audio_format: 'wav'
+    });
     
     try {
       const transcribeForm = new FormData();
@@ -96,17 +243,10 @@ class MLClient {
       return transcriptionData;
 
     } catch (error: any) {
-      const duration = Date.now() - startTime;
-      const errorDetails = {
-        duration: `${duration}ms`,
-        fileSizeKB: Math.round(fileSize / 1024),
-        endpoint: '/api/v1/speech/transcribe_speech',
-        errorType: error.code || error.name || 'unknown',
-        message: error.message,
-        isTimeout: error.code === 'ECONNABORTED' || duration >= 120000
-      };
-      
-      logger.error('MLClient', 'Transcription failed, using mock data', errorDetails);
+      this.logNetworkError('transcription', this.endpoints.transcription, error, {
+        file_size_kb: Math.round(fileSize / 1024),
+        fallback_used: true
+      }, startTime);
       
       // always return mock data on error to keep the flow working
       const mockData = this.generateMockTranscription();
@@ -137,6 +277,12 @@ class MLClient {
     const wavPath = await this.prepareAudioFile(filePath);
     const fileSize = fsSync.existsSync(wavPath) ? fsSync.statSync(wavPath).size : 0;
     
+    // Perform health check and log connection attempt
+    await this.logServiceConnectionAttempt('speech_metrics', this.endpoints.speechMetrics, {
+      file_size_kb: Math.round(fileSize / 1024),
+      transcription_segments: transcriptionData.length
+    });
+
     try {
       const metricsForm = new FormData();
       metricsForm.append('audio_file', createReadStream(wavPath));
@@ -145,7 +291,7 @@ class MLClient {
       logger.info('MLClient', 'Starting speech metrics request', {
         fileSizeKB: Math.round(fileSize / 1024),
         transcriptionSegments: transcriptionData.length,
-        endpoint: '/api/v1/speech/get_speech_metrics'
+        endpoint: this.endpoints.speechMetrics
       });
       
       const metricsResponse = await axios.post(
@@ -215,10 +361,17 @@ class MLClient {
 
   async getPitchAnalysis(text: string): Promise<any | null> {
     const startTime = Date.now();
+    
+    // Perform health check and log connection attempt
+    await this.logServiceConnectionAttempt('text_analytics', this.endpoints.textAnalytics, {
+      text_length: text.length,
+      content_preview: text.substring(0, 100) + '...'
+    });
+    
     try {
       logger.info('MLClient', 'Starting pitch analysis (using text analytics endpoint)', {
         textLength: text.length,
-        endpoint: '/api/v1/text/get_text_analytics'
+        endpoint: this.endpoints.textAnalytics
       });
       
       const response = await axios.post(

@@ -96,22 +96,11 @@ export const Analytics: React.FC = () => {
         maxWidth: '100%', 
         margin: '0 auto'
       }}>
-        <div style={{ 
-          display: 'grid', 
-          gridTemplateColumns: '1fr 1fr', 
-          gap: '70px', 
-          alignItems: 'start'
-        }}>
+        <div className="analytics-grid">
           {/* левая колонка - динамика общей оценки */}
           <div>
             {/* статистические блоки левой колонки */}
-            <div style={{ 
-              display: 'grid', 
-              gridTemplateColumns: 'repeat(4, 1fr)', 
-              gap: '16px',
-              marginBottom: '16px',
-              width: '100%'
-            }}>
+            <div className="analytics-stats-grid">
               {/* всего сессий */}
               <div className="stat-card stat-card-compact accent-blue">
                 <div className="stat-card-value">{analytics?.totalSessions || 0}</div>
@@ -204,13 +193,7 @@ export const Analytics: React.FC = () => {
           {/* правая колонка - средние показатели */}
           <div>
             {/* статистические блоки правой колонки */}
-            <div style={{ 
-              display: 'grid', 
-              gridTemplateColumns: 'repeat(4, 1fr)', 
-              gap: '16px',
-              marginBottom: '16px',
-              width: '100%'
-            }}>
+            <div className="analytics-stats-grid">
               {/* время сегодня */}
               <div className="stat-card stat-card-compact accent-blue">
                 <div className="stat-card-value">{getTodayPracticeTime()}</div>

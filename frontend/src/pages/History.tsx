@@ -88,94 +88,76 @@ export const History: React.FC = () => {
     return Math.round(totalScore * 10); // convert to 100-point scale
   };
 
+  const getTypeLabel = (type: string) => {
+    switch(type) {
+      case 'presentation': return 'Презентация';
+      case 'pitch': return 'Питч';
+      case 'interview': return 'Интервью';
+      case 'meeting': return 'Встреча';
+      case 'training': return 'Тренировка';
+      default: return type;
+    }
+  };
+
+  const getScoreStyle = (status: string) => {
+    if (status === 'completed') return { backgroundColor: '#e8f5e8', color: '#2d7d47' };
+    if (status === 'processing') return { backgroundColor: '#fff3cd', color: '#856404' };
+    if (status === 'failed') return { backgroundColor: '#f8d7da', color: '#721c24' };
+    return { backgroundColor: '#e2e3e5', color: '#6c757d' };
+  };
+
   const filteredTrainings = trainings.filter(training =>
     training.title.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
-    <div>
+    <div className="history-container">
       <h3 style={{ marginBottom: '20px', fontSize: '1.5rem' }}>
         История завершенных тренировок с результатами анализа
       </h3>
       
       <div className="card" style={{ overflow: 'hidden' }}>
         {/* search and delete button */}
-        <div style={{
-          padding: '20px',
-          borderBottom: '1px solid #e9ecef',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          backgroundColor: 'white'
-        }}>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            border: '1px solid #dee2e6',
-            borderRadius: '8px',
-            padding: '8px 12px',
-            width: '300px',
-            background: '#f8f9fa'
-          }}>
+        <div className="history-header">
+          <div className="history-search">
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Поиск по названию..."
-              style={{
-                border: 'none',
-                background: 'none',
-                outline: 'none',
-                flex: 1,
-                fontSize: '14px',
-                color: '#6c757d'
-              }}
             />
           </div>
           <button
             onClick={handleDelete}
             disabled={selectedTrainings.length === 0}
+            className="history-delete-btn"
             style={{
               background: selectedTrainings.length > 0 ? '#ff6b6b' : '#dee2e6',
               color: selectedTrainings.length > 0 ? 'white' : '#6c757d',
-              border: 'none',
-              borderRadius: '8px',
-              padding: '6px 14px',
-              fontSize: '14px',
-              cursor: selectedTrainings.length > 0 ? 'pointer' : 'not-allowed',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
+              cursor: selectedTrainings.length > 0 ? 'pointer' : 'not-allowed'
             }}
           >
             Удалить ({selectedTrainings.length})
           </button>
         </div>
 
-        {/* table */}
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{
-            width: '100%',
-            borderCollapse: 'collapse',
-            fontSize: '14px'
-          }}>
+        {/* desktop table view */}
+        <div className="history-table-wrapper">
+          <table className="history-table">
             <thead>
-              <tr style={{
-                backgroundColor: '#f8f9fa',
-                borderBottom: '2px solid #dee2e6'
-              }}>
-                <th style={{ padding: '12px', textAlign: 'left', width: '40px' }}>
+              <tr>
+                <th style={{ width: '40px' }}>
                   <input
                     type="checkbox"
                     checked={filteredTrainings.length > 0 && selectedTrainings.length === filteredTrainings.length}
                     onChange={(e) => handleSelectAll(e.target.checked)}
                   />
                 </th>
-                <th style={{ padding: '12px', textAlign: 'left' }}>Название тренировки</th>
-                <th style={{ padding: '12px', textAlign: 'left' }}>Дата завершения</th>
-                <th style={{ padding: '12px', textAlign: 'left' }}>Длительность</th>
-                <th style={{ padding: '12px', textAlign: 'left' }}>Тип</th>
-                <th style={{ padding: '12px', textAlign: 'left' }}>Общая оценка</th>
+                <th>Название тренировки</th>
+                <th>Дата завершения</th>
+                <th>Длительность</th>
+                <th>Тип</th>
+                <th>Общая оценка</th>
               </tr>
             </thead>
             <tbody>
@@ -195,17 +177,8 @@ export const History: React.FC = () => {
                 </tr>
               )}
               {!loading && filteredTrainings.map(training => (
-                <tr
-                  key={training.id}
-                  style={{
-                    borderBottom: '1px solid #e9ecef',
-                    cursor: 'pointer',
-                    transition: 'background-color 0.2s'
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8f9fa'}
-                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
-                >
-                  <td style={{ padding: '12px' }}>
+                <tr key={training.id}>
+                  <td>
                     <input
                       type="checkbox"
                       checked={selectedTrainings.includes(training.id)}
@@ -216,7 +189,7 @@ export const History: React.FC = () => {
                       onClick={(e) => e.stopPropagation()}
                     />
                   </td>
-                  <td style={{ padding: '12px' }}>
+                  <td>
                     <button
                       onClick={() => navigate(`/sessions/${training.sessionId}`)}
                       style={{
@@ -237,35 +210,17 @@ export const History: React.FC = () => {
                       Создана: {formatDate(training.createdAt)}
                     </div>
                   </td>
-                  <td style={{ padding: '12px', color: '#5f6368' }}>
+                  <td style={{ color: '#5f6368' }}>
                     {training.completedAt ? formatDate(training.completedAt) : 'Нет данных'}
                   </td>
-                  <td style={{ padding: '12px', color: '#5f6368' }}>
+                  <td style={{ color: '#5f6368' }}>
                     {formatDuration(training.duration)}
                   </td>
-                  <td style={{ padding: '12px', color: '#5f6368' }}>
-                    {training.trainingType === 'presentation' ? 'Презентация' : 
-                     training.trainingType === 'pitch' ? 'Питч' :
-                     training.trainingType === 'interview' ? 'Интервью' :
-                     training.trainingType === 'meeting' ? 'Встреча' :
-                     training.trainingType === 'training' ? 'Тренировка' :
-                     training.trainingType}
+                  <td style={{ color: '#5f6368' }}>
+                    {getTypeLabel(training.trainingType)}
                   </td>
-                  <td style={{ padding: '12px' }}>
-                    <div style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      padding: '4px 8px',
-                      borderRadius: '12px',
-                      backgroundColor: training.status === 'completed' ? '#e8f5e8' : 
-                                      training.status === 'processing' ? '#fff3cd' :
-                                      training.status === 'failed' ? '#f8d7da' : '#e2e3e5',
-                      color: training.status === 'completed' ? '#2d7d47' : 
-                             training.status === 'processing' ? '#856404' :
-                             training.status === 'failed' ? '#721c24' : '#6c757d',
-                      fontSize: '13px',
-                      fontWeight: 500
-                    }}>
+                  <td>
+                    <div className="history-card-score" style={getScoreStyle(training.status)}>
                       {training.status === 'completed' 
                         ? (calculateScore(training) !== null ? `${calculateScore(training)}/100` : 'Нет оценки')
                         : training.status === 'processing' ? 'В обработке'
@@ -277,6 +232,73 @@ export const History: React.FC = () => {
               ))}
             </tbody>
           </table>
+        </div>
+
+        {/* mobile card view */}
+        <div className="history-cards">
+          {loading && (
+            <div style={{ padding: '40px', textAlign: 'center', color: '#6c757d' }}>
+              Загрузка...
+            </div>
+          )}
+          {!loading && filteredTrainings.length === 0 && (
+            <div style={{ padding: '40px', textAlign: 'center', color: '#6c757d' }}>
+              <p>Нет завершенных тренировок</p>
+              <p>Запишите свою первую тренировку и получите результаты анализа!</p>
+            </div>
+          )}
+          {!loading && filteredTrainings.map(training => (
+            <div 
+              key={training.id} 
+              className="history-card"
+              onClick={() => navigate(`/sessions/${training.sessionId}`)}
+            >
+              <div className="history-card-header">
+                <div style={{ flex: 1 }}>
+                  <div className="history-card-title">
+                    {training.title}
+                  </div>
+                  <div className="history-card-date">
+                    {training.completedAt ? formatDate(training.completedAt) : 'Не завершено'}
+                  </div>
+                </div>
+                <div className="history-card-score" style={getScoreStyle(training.status)}>
+                  {training.status === 'completed' 
+                    ? (calculateScore(training) !== null ? `${calculateScore(training)}/100` : 'Нет оценки')
+                    : training.status === 'processing' ? 'В обработке'
+                    : training.status === 'failed' ? 'Ошибка'
+                    : 'Неизвестно'}
+                </div>
+              </div>
+              <div className="history-card-details">
+                <div className="history-card-detail">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                  </svg>
+                  {formatDuration(training.duration)}
+                </div>
+                <div className="history-card-detail">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14,2 14,8 20,8"/>
+                  </svg>
+                  {getTypeLabel(training.trainingType)}
+                </div>
+                <div className="history-card-detail">
+                  <input
+                    type="checkbox"
+                    checked={selectedTrainings.includes(training.id)}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      handleTrainingToggle(training.id);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </div>
