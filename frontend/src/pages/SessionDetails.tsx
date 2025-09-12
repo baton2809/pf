@@ -10,6 +10,9 @@ import { EnergyComponent } from '../components/analysis/EnergyComponent';
 import { ClarityComponent } from '../components/analysis/ClarityComponent';
 import { ConfidenceComponent } from '../components/analysis/ConfidenceComponent';
 import { FinalScoreComponent } from '../components/analysis/FinalScoreComponent';
+import { PresentationFeedbackComponent } from '../components/analysis/PresentationFeedbackComponent';
+import { QuestionsComponent } from '../components/analysis/QuestionsComponent';
+import { PitchEvaluationComponent } from '../components/analysis/PitchEvaluationComponent';
 
 // utility functions
 import { 
@@ -25,6 +28,12 @@ interface SessionComponentState {
   transcriptionReady: boolean;
   metricsReady: boolean;
   analysisComplete: boolean;
+  pitchAnalysisLoading: boolean;
+  pitchAnalysisError: boolean;
+  questionsLoading: boolean;
+  questionsError: boolean;
+  feedbackLoading: boolean;
+  feedbackError: boolean;
 }
 
 const SessionDetailsComponent: React.FC = () => {
@@ -43,7 +52,13 @@ const SessionDetailsComponent: React.FC = () => {
   const [componentState, setComponentState] = useState<SessionComponentState>({
     transcriptionReady: false,
     metricsReady: false,
-    analysisComplete: false
+    analysisComplete: false,
+    pitchAnalysisLoading: false,
+    pitchAnalysisError: false,
+    questionsLoading: false,
+    questionsError: false,
+    feedbackLoading: false,
+    feedbackError: false
   });
   const eventSourceRef = useRef<EventSource | null>(null);
   const isNavigatingAwayRef = useRef<boolean>(false);
@@ -98,7 +113,13 @@ const SessionDetailsComponent: React.FC = () => {
         setComponentState({
           transcriptionReady,
           metricsReady,
-          analysisComplete
+          analysisComplete,
+          pitchAnalysisLoading: false,
+          pitchAnalysisError: false,
+          questionsLoading: false,
+          questionsError: false,
+          feedbackLoading: false,
+          feedbackError: false
         });
         
         // handle completion data when status is 'completed'
@@ -116,6 +137,124 @@ const SessionDetailsComponent: React.FC = () => {
           setTranscriptionData(data.segments);
         }
         setComponentState(prev => ({ ...prev, transcriptionReady: true }));
+        // if cached, don't override progress
+        if (!data.cached) {
+          setProgress(data.progress || 35);
+        }
+        break;
+      
+      case 'metrics_ready':
+        // new event for speech metrics
+        if (data.data) {
+          setAnalysisData((prev: any) => ({
+            ...prev,
+            metrics: data.data
+          }));
+        }
+        setComponentState(prev => ({ ...prev, metricsReady: true }));
+        if (!data.cached) {
+          setProgress(data.progress || 65);
+        }
+        logger.info('SessionDetails', 'Metrics ready', { cached: data.cached });
+        break;
+      
+      case 'pitch_analysis_ready':
+        // new event for pitch analysis
+        if (data.data) {
+          setAnalysisData((prev: any) => ({
+            ...prev,
+            pitch_evaluation: data.data.pitch_evaluation,
+            filler_words: data.data.filler_words,
+            hesitant_phrases: data.data.hesitant_phrases,
+            unclarity_moments: data.data.unclarity_moments
+          }));
+        }
+        setComponentState(prev => ({
+          ...prev,
+          pitchAnalysisLoading: false,
+          pitchAnalysisError: false
+        }));
+        if (!data.cached) {
+          setProgress(data.progress || 75);
+        }
+        logger.info('SessionDetails', 'Pitch analysis ready', { cached: data.cached });
+        break;
+      
+      case 'questions_ready':
+        // new event for questions
+        if (data.data) {
+          setAnalysisData((prev: any) => ({
+            ...prev,
+            questions: data.data
+          }));
+        }
+        setComponentState(prev => ({
+          ...prev,
+          questionsLoading: false,
+          questionsError: false
+        }));
+        if (!data.cached) {
+          setProgress(data.progress || 50);
+        }
+        logger.info('SessionDetails', 'Questions ready', { cached: data.cached });
+        break;
+      
+      case 'feedback_ready':
+        // new event for presentation feedback
+        if (data.data) {
+          setAnalysisData((prev: any) => ({
+            ...prev,
+            presentation_feedback: data.data
+          }));
+        }
+        setComponentState(prev => ({
+          ...prev,
+          feedbackLoading: false,
+          feedbackError: false
+        }));
+        if (!data.cached) {
+          setProgress(data.progress || 85);
+        }
+        logger.info('SessionDetails', 'Feedback ready', { cached: data.cached });
+        break;
+      
+      case 'session_completed':
+        // new final event when all operations complete
+        if (data.data) {
+          setAnalysisData(data.data);
+          if (data.data.speech_segments) {
+            setTranscriptionData(data.data.speech_segments);
+          }
+        }
+        setComponentState({
+          transcriptionReady: true,
+          metricsReady: true,
+          analysisComplete: true,
+          pitchAnalysisLoading: false,
+          pitchAnalysisError: false,
+          questionsLoading: false,
+          questionsError: false,
+          feedbackLoading: false,
+          feedbackError: false
+        });
+        setIsLoadingInitialData(false);
+        setProgress(100);
+        
+        // log summary
+        if (data.summary) {
+          logger.info('SessionDetails', 'Session completed', {
+            total: data.summary.total,
+            completed: data.summary.completed,
+            failed: data.summary.failed
+          });
+        }
+        
+        // close SSE connection
+        if (eventSourceRef.current) {
+          logger.info('SessionDetails', 'Closing SSE after session completion');
+          eventSourceRef.current.close();
+          eventSourceRef.current = null;
+        }
         break;
         
       case 'completed':
@@ -128,7 +267,13 @@ const SessionDetailsComponent: React.FC = () => {
         setComponentState({
           transcriptionReady: true,
           metricsReady: true,
-          analysisComplete: true
+          analysisComplete: true,
+          pitchAnalysisLoading: false,
+          pitchAnalysisError: false,
+          questionsLoading: false,
+          questionsError: false,
+          feedbackLoading: false,
+          feedbackError: false
         });
         setIsLoadingInitialData(false);
         
@@ -143,6 +288,33 @@ const SessionDetailsComponent: React.FC = () => {
       case 'error':
         logger.error('SessionDetails', 'Processing error via SSE', data.error);
         setError(data.error || 'Ошибка обработки');
+        break;
+
+      case 'pitch_analysis_error':
+        logger.error('SessionDetails', 'Pitch analysis error', data.error);
+        setComponentState(prev => ({
+          ...prev,
+          pitchAnalysisLoading: false,
+          pitchAnalysisError: true
+        }));
+        break;
+
+      case 'questions_error':
+        logger.error('SessionDetails', 'Questions generation error', data.error);
+        setComponentState(prev => ({
+          ...prev,
+          questionsLoading: false,
+          questionsError: true
+        }));
+        break;
+
+      case 'feedback_error':
+        logger.error('SessionDetails', 'Feedback generation error', data.error);
+        setComponentState(prev => ({
+          ...prev,
+          feedbackLoading: false,
+          feedbackError: true
+        }));
         break;
         
       case 'connection_closing':
@@ -229,7 +401,13 @@ const SessionDetailsComponent: React.FC = () => {
         setComponentState({
           transcriptionReady: true,
           metricsReady: true,
-          analysisComplete: true
+          analysisComplete: true,
+          pitchAnalysisLoading: false,
+          pitchAnalysisError: false,
+          questionsLoading: false,
+          questionsError: false,
+          feedbackLoading: false,
+          feedbackError: false
         });
         setIsLoadingInitialData(false);
         return; // SSE not needed
@@ -237,6 +415,13 @@ const SessionDetailsComponent: React.FC = () => {
       
       // 4. If processing or uploaded - start SSE
       if (['uploaded', 'processing'].includes(initialStatus.status)) {
+        // set new component loading states to true
+        setComponentState(prev => ({
+          ...prev,
+          pitchAnalysisLoading: true,
+          questionsLoading: true,
+          feedbackLoading: true
+        }));
         // use startSSE directly to avoid dependency cycle
         // close existing connection if any
         if (eventSourceRef.current) {
@@ -431,6 +616,35 @@ const SessionDetailsComponent: React.FC = () => {
             />
           </>
         )}
+
+        {/* Pitch Evaluation - show loading, error, or ready state */}
+        <PitchEvaluationComponent 
+          marks={analysisData?.pitch_evaluation?.marks}
+          missing_blocks={analysisData?.pitch_evaluation?.missing_blocks}
+          isLoading={componentState.pitchAnalysisLoading}
+          hasError={componentState.pitchAnalysisError}
+          errorMessage="Сервис анализа питча испытывает нагрузки. Пожалуйста, попробуйте позже."
+        />
+
+        {/* Questions - show loading, error, or ready state */}
+        <QuestionsComponent 
+          questions={analysisData?.questions}
+          isLoading={componentState.questionsLoading}
+          hasError={componentState.questionsError}
+          errorMessage="Сервис генерации вопросов испытывает нагрузки. Пожалуйста, попробуйте позже."
+        />
+
+        {/* Presentation Feedback - show loading, error, or ready state */}
+        <PresentationFeedbackComponent 
+          pros={analysisData?.presentation_feedback?.pros}
+          cons={analysisData?.presentation_feedback?.cons}
+          recommendations={analysisData?.presentation_feedback?.recommendations}
+          feedback={analysisData?.presentation_feedback?.feedback}
+          isLoading={componentState.feedbackLoading}
+          hasError={componentState.feedbackError}
+          errorMessage="Сервис анализа презентации испытывает нагрузки. Пожалуйста, попробуйте позже."
+        />
+
       </div>
 
       <div style={{ textAlign: 'center', marginTop: '30px' }}>

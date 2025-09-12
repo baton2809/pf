@@ -111,8 +111,8 @@ class Database {
           id UUID PRIMARY KEY,
           title VARCHAR(255) NOT NULL,
           type VARCHAR(50) DEFAULT 'presentation',
-          user_id VARCHAR(255) NOT NULL,
-          status VARCHAR(20) DEFAULT 'created' CHECK (status IN ('created', 'active', 'completed')),
+          user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          status VARCHAR(20) DEFAULT 'created',
           presentation_path VARCHAR(500),
           presentation_name VARCHAR(255),
           created_at TIMESTAMP DEFAULT NOW(),
@@ -127,7 +127,7 @@ class Database {
           training_id UUID NOT NULL REFERENCES trainings(id) ON DELETE CASCADE,
           user_id UUID REFERENCES users(id) ON DELETE CASCADE,
           filename VARCHAR(255),
-          status VARCHAR(20) DEFAULT 'initialized' CHECK (status IN ('initialized', 'recording', 'uploaded', 'processing', 'completed', 'failed')),
+          status VARCHAR(20) DEFAULT 'initialized',
           audio_path VARCHAR(500),
           duration INTEGER DEFAULT 0,
           ml_results JSONB,
@@ -145,12 +145,8 @@ class Database {
         CREATE TABLE IF NOT EXISTS ml_operations (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-          operation_type VARCHAR(50) NOT NULL CHECK (operation_type IN (
-            'transcription', 'questions', 'speech_metrics', 'text_analytics', 'presentation_feedback'
-          )),
-          status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN (
-            'pending', 'processing', 'completed', 'failed', 'skipped'
-          )),
+          operation_type VARCHAR(50) NOT NULL,
+          status VARCHAR(20) NOT NULL DEFAULT 'pending',
           input_data JSONB,
           result_data JSONB,
           error_details JSONB,

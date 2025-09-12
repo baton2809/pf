@@ -251,189 +251,37 @@ class AudioProcessor {
         database.updateMLOperation(feedbackOpId, 'processing')
       ]);
       
-      // parallel execution of all operations that can run simultaneously
-      const [metricsResult, pitchAnalysisResult, feedbackResult] = await Promise.allSettled([
-        // Speech metrics (needs audio file + transcription)
-        (async () => {
-          const start = Date.now();
-          const result = await mlClient.getMetrics(filePath, transcriptionData);
-          processingTime.metrics = Date.now() - start;
-          
-          if (result.success) {
-            await database.updateMLOperation(metricsOpId, 'completed', result.data);
-          } else {
-            await database.updateMLOperation(metricsOpId, 'failed', null, result.error);
-          }
-          return result;
-        })(),
-        
-        // Pitch analysis (needs only text)
-        (async () => {
-          const start = Date.now();
-          const result = await mlClient.getPitchAnalysis(transcriptText);
-          processingTime.pitch_analysis = Date.now() - start;
-          
-          if (result.success) {
-            await database.updateMLOperation(textAnalyticsOpId, 'completed', result.data);
-          } else {
-            await database.updateMLOperation(textAnalyticsOpId, 'failed', null, result.error);
-          }
-          return result;
-        })(),
-        
-        // Presentation feedback (needs only text)
-        (async () => {
-          const start = Date.now();
-          const result = await mlClient.getPresentationFeedback(transcriptText);
-          processingTime.presentation_feedback = Date.now() - start;
-          
-          if (result.success) {
-            await database.updateMLOperation(feedbackOpId, 'completed', result.data);
-          } else {
-            await database.updateMLOperation(feedbackOpId, 'failed', null, result.error);
-          }
-          return result;
-        })()
-      ]);
-
+      // launch parallel operations WITHOUT waiting - they will complete independently
+      // each operation will broadcast its results immediately when ready
+      this.processMetricsAsync(sessionId, filePath, transcriptionData, metricsOpId);
+      this.processPitchAsync(sessionId, transcriptText, textAnalyticsOpId);
+      this.processFeedbackAsync(sessionId, transcriptText, feedbackOpId);
+      
       processingTime.parallel_processing = Date.now() - parallelStart;
+      
+      logger.info('AudioProcessor', 'Parallel operations launched independently', {
+        sessionId,
+        launchTime: processingTime.parallel_processing,
+        message: 'Operations will complete asynchronously and broadcast results independently'
+      });
+      
+      
+      // no longer waiting for all operations to complete
+      // each operation will call checkAndFinalizeSession when done
+      // the last operation to complete will finalize the session
+      
+      // update session status to indicate operations are running
+      await database.updateSessionById(sessionId, {
+        duration: audioDuration
+      });
+      
       processingTime.total = Date.now() - startTime;
       
-      logger.info('AudioProcessor', 'Parallel processing completed', {
+      logger.info('AudioProcessor', 'Main processing flow complete, operations running independently', {
         sessionId,
-        parallelTime: processingTime.parallel_processing,
-        metricsTime: processingTime.metrics,
-        pitchTime: processingTime.pitch_analysis,
-        feedbackTime: processingTime.presentation_feedback,
-        questionsTime: processingTime.questions,
-        results: {
-          metricsSuccess: metricsResult.status === 'fulfilled' && metricsResult.value.success,
-          pitchSuccess: pitchAnalysisResult.status === 'fulfilled' && pitchAnalysisResult.value.success,
-          feedbackSuccess: feedbackResult.status === 'fulfilled' && feedbackResult.value.success
-        }
+        totalTimeBeforeAsync: processingTime.total,
+        message: 'Operations will complete and broadcast results independently'
       });
-      
-      // broadcast parallel processing completion
-      sseManager.broadcast(sessionId, {
-        type: 'progress',
-        status: 'processing',
-        progress: 85,
-        message: 'All analysis completed, preparing final results',
-        step: 'parallel_processing_completed',
-        sessionId,
-        timestamp: new Date().toISOString()
-      });
-
-      // build results from database (for compatibility and retry capability)
-      const compatibleResults = await database.buildCompatibleMLResults(sessionId);
-      
-      // determine overall processing status
-      const completedOperations = await database.getMLOperations(sessionId);
-      const hasFailures = completedOperations.some(op => op.status === 'failed');
-      const allCompleted = completedOperations.every(op => op.status === 'completed');
-      
-      let mlProcessingStatus: 'completed' | 'partial' | 'failed';
-      if (allCompleted) {
-        mlProcessingStatus = 'completed';
-      } else if (completedOperations.some(op => op.status === 'completed')) {
-        mlProcessingStatus = 'partial';
-      } else {
-        mlProcessingStatus = 'failed';
-      }
-
-      // stage 5: completed (100%) - critical database update with error handling
-      logger.info('AudioProcessor', 'Starting final database update', {
-        sessionId,
-        mlProcessingStatus,
-        hasCompatibleResults: !!compatibleResults,
-        operationsCount: completedOperations.length,
-        failedOperationsCount: completedOperations.filter(op => op.status === 'failed').length
-      });
-
-      try {
-        const updatedSession = await database.updateSessionById(sessionId, {
-          status: mlProcessingStatus === 'failed' ? 'failed' : 'completed',
-          mlResults: compatibleResults, // for compatibility with existing frontend
-          mlProcessingStatus: mlProcessingStatus,
-          duration: audioDuration,
-          completedAt: new Date()
-        });
-
-        if (!updatedSession) {
-          throw new Error('Database update returned null - session may not exist');
-        }
-
-        logger.info('AudioProcessor', 'Database update successful', {
-          sessionId,
-          finalStatus: updatedSession.status,
-          mlProcessingStatus: updatedSession.ml_processing_status,
-          hasMlResults: !!updatedSession.ml_results,
-          completedAt: updatedSession.completed_at
-        });
-
-        // only emit progress after successful database update
-        this.emitProgress(sessionId, 100, 'completed', compatibleResults);
-        
-        // close all SSE connections after sending completion
-        setTimeout(() => {
-          sseManager.closeAll(sessionId);
-        }, 2000); // give time for client to receive completion data
-        
-        const timeSaved = (processingTime.metrics + processingTime.pitch_analysis + processingTime.presentation_feedback) - processingTime.parallel_processing;
-        
-        // user completion activity
-        logger.info('UserActivity', 'Processing completed', {
-          sessionId,
-          mlProcessingStatus,
-          totalProcessingTime: `${processingTime.total}ms`,
-          stages: {
-            transcription: `${processingTime.transcription}ms`,
-            questions: `${processingTime.questions}ms`,
-            parallelProcessing: `${processingTime.parallel_processing}ms`
-          },
-          operations: {
-            completed: completedOperations.filter(op => op.status === 'completed').length,
-            failed: completedOperations.filter(op => op.status === 'failed').length,
-            total: completedOperations.length
-          }
-        });
-
-        logger.info('AudioProcessor', 'Processing pipeline completed', {
-          sessionId,
-          totalTime: processingTime.total,
-          timeSaved,
-          mlProcessingStatus,
-          operationsStatus: completedOperations.reduce((acc, op) => {
-            acc[op.operation_type] = op.status;
-            return acc;
-          }, {} as Record<string, string>)
-        });
-
-      } catch (dbError: any) {
-        logger.error('AudioProcessor', 'CRITICAL: Failed to save session update to database', {
-          sessionId,
-          dbError: dbError.message,
-          mlProcessingStatus,
-          operationsCompleted: completedOperations.length
-        });
-
-        // set status to failed since we can't save the results
-        try {
-          await database.updateSessionById(sessionId, { 
-            status: 'failed',
-            mlProcessingStatus: 'failed' 
-          });
-          this.emitProgress(sessionId, 0, 'error', null, 'Failed to save results to database');
-        } catch (fallbackError: any) {
-          logger.error('AudioProcessor', 'CRITICAL: Even fallback status update failed', {
-            sessionId,
-            fallbackError: fallbackError.message
-          });
-        }
-        
-        // re-throw to be caught by outer catch block
-        throw new Error(`Database save failed: ${dbError.message}`);
-      }
 
     } catch (error: any) {
       logger.error('AudioProcessor', 'Processing pipeline failed', { 
@@ -464,7 +312,7 @@ class AudioProcessor {
       }
     }
   }
-
+  
   // new method to retry failed operations
   async retryFailedOperations(sessionId: string): Promise<void> {
     try {
@@ -597,6 +445,257 @@ class AudioProcessor {
       logger.error('AudioProcessor', 'Text analysis failed', { sessionId, error });
       return null;
     }
+  }
+
+  // calculate dynamic progress based on completed operations
+  async calculateProgress(sessionId: string): Promise<number> {
+    const operations = await database.getMLOperations(sessionId);
+    const weights: { [key: string]: number } = {
+      transcription: 30,
+      questions: 15,
+      speech_metrics: 20,
+      text_analytics: 20,
+      presentation_feedback: 15
+    };
+    
+    let totalProgress = 0;
+    for (const op of operations) {
+      if (op.status === 'completed') {
+        totalProgress += weights[op.operation_type] || 0;
+      } else if (op.status === 'processing') {
+        totalProgress += (weights[op.operation_type] || 0) * 0.5;
+      }
+    }
+    
+    return Math.min(totalProgress, 95); // reserve 5% for finalization
+  }
+
+  // process speech metrics asynchronously
+  private async processMetricsAsync(
+    sessionId: string, 
+    filePath: string, 
+    transcriptionData: any[],
+    metricsOpId: string
+  ): Promise<void> {
+    try {
+      await database.updateMLOperation(metricsOpId, 'processing');
+      
+      const result = await mlClient.getMetrics(filePath, transcriptionData);
+      
+      if (result.success) {
+        await database.updateMLOperation(metricsOpId, 'completed', result.data);
+        
+        const progress = await this.calculateProgress(sessionId);
+        sseManager.broadcast(sessionId, {
+          type: 'metrics_ready',
+          status: 'processing',
+          progress,
+          message: 'Speech metrics analysis completed',
+          step: 'metrics_completed',
+          sessionId,
+          timestamp: new Date().toISOString(),
+          data: result.data
+        });
+        
+        logger.info('AudioProcessor', 'Metrics completed independently', { sessionId });
+      } else {
+        await database.updateMLOperation(metricsOpId, 'failed', null, result.error);
+        
+        sseManager.broadcast(sessionId, {
+          type: 'metrics_failed',
+          status: 'processing',
+          progress: await this.calculateProgress(sessionId),
+          message: 'Speech metrics analysis failed, other analyses continue',
+          step: 'metrics_failed',
+          sessionId,
+          timestamp: new Date().toISOString(),
+          error: result.error
+        });
+      }
+      
+      await this.checkAndFinalizeSession(sessionId);
+    } catch (error: any) {
+      logger.error('AudioProcessor', 'Metrics processing failed', { sessionId, error });
+      await database.updateMLOperation(metricsOpId, 'failed', null, { 
+        type: 'PROCESSING_ERROR', 
+        message: error.message 
+      });
+    }
+  }
+
+  // process pitch analysis asynchronously
+  private async processPitchAsync(
+    sessionId: string,
+    transcriptText: string,
+    textAnalyticsOpId: string
+  ): Promise<void> {
+    try {
+      await database.updateMLOperation(textAnalyticsOpId, 'processing');
+      
+      const result = await mlClient.getPitchAnalysis(transcriptText);
+      
+      if (result.success) {
+        await database.updateMLOperation(textAnalyticsOpId, 'completed', result.data);
+        
+        const progress = await this.calculateProgress(sessionId);
+        sseManager.broadcast(sessionId, {
+          type: 'pitch_analysis_ready',
+          status: 'processing',
+          progress,
+          message: 'Pitch analysis completed',
+          step: 'pitch_analysis_completed',
+          sessionId,
+          timestamp: new Date().toISOString(),
+          data: result.data
+        });
+        
+        logger.info('AudioProcessor', 'Pitch analysis completed independently', { sessionId });
+      } else {
+        await database.updateMLOperation(textAnalyticsOpId, 'failed', null, result.error);
+        
+        sseManager.broadcast(sessionId, {
+          type: 'pitch_analysis_failed',
+          status: 'processing',
+          progress: await this.calculateProgress(sessionId),
+          message: 'Pitch analysis failed, other analyses continue',
+          step: 'pitch_analysis_failed',
+          sessionId,
+          timestamp: new Date().toISOString(),
+          error: result.error
+        });
+      }
+      
+      await this.checkAndFinalizeSession(sessionId);
+    } catch (error: any) {
+      logger.error('AudioProcessor', 'Pitch analysis processing failed', { sessionId, error });
+      await database.updateMLOperation(textAnalyticsOpId, 'failed', null, { 
+        type: 'PROCESSING_ERROR', 
+        message: error.message 
+      });
+    }
+  }
+
+  // process presentation feedback asynchronously
+  private async processFeedbackAsync(
+    sessionId: string,
+    transcriptText: string,
+    feedbackOpId: string
+  ): Promise<void> {
+    try {
+      await database.updateMLOperation(feedbackOpId, 'processing');
+      
+      const result = await mlClient.getPresentationFeedback(transcriptText);
+      
+      if (result.success) {
+        await database.updateMLOperation(feedbackOpId, 'completed', result.data);
+        
+        const progress = await this.calculateProgress(sessionId);
+        sseManager.broadcast(sessionId, {
+          type: 'feedback_ready',
+          status: 'processing',
+          progress,
+          message: 'Presentation feedback completed',
+          step: 'feedback_completed',
+          sessionId,
+          timestamp: new Date().toISOString(),
+          data: result.data
+        });
+        
+        logger.info('AudioProcessor', 'Feedback completed independently', { sessionId });
+      } else {
+        await database.updateMLOperation(feedbackOpId, 'failed', null, result.error);
+        
+        sseManager.broadcast(sessionId, {
+          type: 'feedback_failed',
+          status: 'processing',
+          progress: await this.calculateProgress(sessionId),
+          message: 'Presentation feedback failed, other analyses continue',
+          step: 'feedback_failed',
+          sessionId,
+          timestamp: new Date().toISOString(),
+          error: result.error
+        });
+      }
+      
+      await this.checkAndFinalizeSession(sessionId);
+    } catch (error: any) {
+      logger.error('AudioProcessor', 'Feedback processing failed', { sessionId, error });
+      await database.updateMLOperation(feedbackOpId, 'failed', null, { 
+        type: 'PROCESSING_ERROR', 
+        message: error.message 
+      });
+    }
+  }
+
+  // check if all operations are complete and finalize session
+  private async checkAndFinalizeSession(sessionId: string): Promise<void> {
+    const operations = await database.getMLOperations(sessionId);
+    
+    const completed = operations.filter(op => op.status === 'completed').length;
+    const failed = operations.filter(op => op.status === 'failed').length;
+    const processing = operations.filter(op => op.status === 'processing').length;
+    
+    // if still processing, wait
+    if (processing > 0) {
+      return;
+    }
+    
+    // all operations finished (success or failure)
+    const allOps = operations.length;
+    let finalStatus: 'completed' | 'partial' | 'failed';
+    let finalMessage: string;
+    
+    if (completed === allOps) {
+      finalStatus = 'completed';
+      finalMessage = 'All analyses completed successfully';
+    } else if (completed > 0) {
+      finalStatus = 'partial';
+      finalMessage = `${completed} of ${allOps} analyses completed`;
+    } else {
+      finalStatus = 'failed';
+      finalMessage = 'All analyses failed';
+    }
+    
+    // build all available results
+    const mlResults = await database.buildCompatibleMLResults(sessionId);
+    
+    // update session
+    await database.updateSessionById(sessionId, {
+      status: finalStatus === 'failed' ? 'failed' : 'completed',
+      mlResults,
+      mlProcessingStatus: finalStatus,
+      completedAt: new Date()
+    });
+    
+    // send final event
+    sseManager.broadcast(sessionId, {
+      type: 'session_completed',
+      status: finalStatus,
+      progress: 100,
+      message: finalMessage,
+      step: 'session_finalized',
+      sessionId,
+      timestamp: new Date().toISOString(),
+      data: mlResults,
+      summary: {
+        total: allOps,
+        completed,
+        failed
+      }
+    });
+    
+    logger.info('AudioProcessor', 'Session finalized', {
+      sessionId,
+      finalStatus,
+      completed,
+      failed,
+      total: allOps
+    });
+    
+    // close SSE connections after 2 seconds
+    setTimeout(() => {
+      sseManager.closeAll(sessionId);
+    }, 2000);
   }
 
   // start async processing without blocking

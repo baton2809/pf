@@ -690,7 +690,106 @@ const trainingRoutes: FastifyPluginAsync<TrainingRoutesOptions> = async (fastify
 
       reply.raw.write(`data: ${JSON.stringify(initialData)}\n\n`);
 
-      // if session is already completed, send results and close
+      // send cached ML operation results if session is processing or completed
+      if (session.status === 'processing' || session.status === 'completed') {
+        try {
+          const operations = await database.getMLOperations(sessionId);
+          
+          // send each completed operation as a cached result
+          for (const op of operations) {
+            if (op.status === 'completed' && op.result) {
+              let eventType = '';
+              switch (op.operation_type) {
+                case 'transcription':
+                  eventType = 'transcription_completed';
+                  // special handling for transcription - send segments
+                  if (Array.isArray(op.result)) {
+                    reply.raw.write(`data: ${JSON.stringify({
+                      type: eventType,
+                      segments: op.result,
+                      progress: calculateProgress(session),
+                      message: 'Transcription (cached)',
+                      step: 'transcription_cached',
+                      sessionId,
+                      timestamp: op.completed_at || op.updated_at,
+                      cached: true
+                    })}\n\n`);
+                  }
+                  break;
+                case 'speech_metrics':
+                  eventType = 'metrics_ready';
+                  reply.raw.write(`data: ${JSON.stringify({
+                    type: eventType,
+                    status: 'processing',
+                    progress: calculateProgress(session),
+                    message: 'Speech metrics (cached)',
+                    step: 'metrics_cached',
+                    sessionId,
+                    timestamp: op.completed_at || op.updated_at,
+                    data: op.result,
+                    cached: true
+                  })}\n\n`);
+                  break;
+                case 'text_analytics':
+                  eventType = 'pitch_analysis_ready';
+                  reply.raw.write(`data: ${JSON.stringify({
+                    type: eventType,
+                    status: 'processing',
+                    progress: calculateProgress(session),
+                    message: 'Pitch analysis (cached)',
+                    step: 'pitch_analysis_cached',
+                    sessionId,
+                    timestamp: op.completed_at || op.updated_at,
+                    data: op.result,
+                    cached: true
+                  })}\n\n`);
+                  break;
+                case 'questions':
+                  eventType = 'questions_ready';
+                  reply.raw.write(`data: ${JSON.stringify({
+                    type: eventType,
+                    status: 'processing',
+                    progress: calculateProgress(session),
+                    message: 'Questions (cached)',
+                    step: 'questions_cached',
+                    sessionId,
+                    timestamp: op.completed_at || op.updated_at,
+                    data: op.result,
+                    cached: true
+                  })}\n\n`);
+                  break;
+                case 'presentation_feedback':
+                  eventType = 'feedback_ready';
+                  reply.raw.write(`data: ${JSON.stringify({
+                    type: eventType,
+                    status: 'processing',
+                    progress: calculateProgress(session),
+                    message: 'Feedback (cached)',
+                    step: 'feedback_cached',
+                    sessionId,
+                    timestamp: op.completed_at || op.updated_at,
+                    data: op.result,
+                    cached: true
+                  })}\n\n`);
+                  break;
+              }
+              
+              logger.debug('SSE', 'Sent cached ML operation result', {
+                sessionId,
+                operationType: op.operation_type,
+                eventType
+              });
+            }
+          }
+        } catch (error: any) {
+          logger.error('SSE', 'Failed to send cached ML results', {
+            sessionId,
+            error: error.message
+          });
+        }
+      }
+
+      // if session is already completed, send final results and close
       if (session.status === 'completed' && session.ml_results) {
         const resultsData = {
           type: 'completed',
