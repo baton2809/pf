@@ -161,8 +161,9 @@ class AuthTrainingApiService {
       retryDelay?: number;
     }
   ): EventSource {
+    const token = localStorage.getItem('authToken');
     const eventSource = new EventSource(
-      `${this.baseUrl}/api/training/session/${sessionId}/events`
+      `${this.baseUrl}/api/training/session/${sessionId}/events?token=${token}`
     );
 
     let retryCount = 0;

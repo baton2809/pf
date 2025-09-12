@@ -644,14 +644,31 @@ const trainingRoutes: FastifyPluginAsync<TrainingRoutesOptions> = async (fastify
   // SSE endpoint for real-time session updates
   fastify.get<{
     Params: { sessionId: string };
+    Querystring: { token?: string };
   }>('/api/training/session/:sessionId/events', async (request, reply) => {
     const { sessionId } = request.params;
+    const { token } = request.query;
     
     try {
+      // validate JWT token from query parameter
+      if (!token) {
+        return reply.code(401).send({ error: 'Token required' });
+      }
+      
+      const user = await authService.verifyJWT(token);
+      if (!user) {
+        return reply.code(401).send({ error: 'Invalid token' });
+      }
+      
       // check if session exists
       const session = await database.getSessionBySessionId(sessionId);
       if (!session) {
         return reply.code(404).send({ error: 'Сессия не найдена' });
+      }
+      
+      // validate session ownership  
+      if (session.user_id !== user.userId) {
+        return reply.code(403).send({ error: 'Access denied' });
       }
 
       // setup SSE headers using hijack to take raw control

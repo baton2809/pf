@@ -161,6 +161,13 @@ const SessionDetailsComponent: React.FC = () => {
       case 'pitch_analysis_ready':
         // new event for pitch analysis
         if (data.data) {
+          // log filler_words for debugging
+          logger.info('SessionDetails', 'Pitch analysis filler_words received', {
+            filler_words: data.data.filler_words,
+            filler_words_count: data.data.filler_words?.length || 0,
+            filler_words_sample: data.data.filler_words?.[0] || null
+          });
+          
           setAnalysisData((prev: any) => ({
             ...prev,
             pitch_evaluation: data.data.pitch_evaluation,
@@ -373,15 +380,24 @@ const SessionDetailsComponent: React.FC = () => {
   }, [checkSessionStatusHTTP, sessionStatus]);
   // smart SSE initialization - moved to top level
   const initializeSSE = useCallback(async () => {
-    if (!sessionId) return;
+    if (!sessionId) {
+      console.log('[SessionDetails] No sessionId, skipping SSE initialization');
+      return;
+    }
     
     console.log(`[SessionDetails] Initializing SSE for session ${sessionId}`);
+    logger.info('SessionDetails', 'Starting SSE initialization', { sessionId });
     
     try {
       // 1. First check current session status
       const initialStatus = await trainingApi.getSessionStatus(sessionId);
       
       console.log('[SessionDetails] Initial status:', initialStatus);
+      logger.info('SessionDetails', 'Got initial status', { 
+        sessionId, 
+        status: initialStatus.status, 
+        progress: initialStatus.progress 
+      });
       
       // 2. Update UI immediately
       setProgress(initialStatus.progress || 0);
@@ -390,13 +406,34 @@ const SessionDetailsComponent: React.FC = () => {
       
       // 3. If already completed - load results and don't start SSE
       if (initialStatus.status === 'completed') {
+        console.log('[SessionDetails] Session completed, loading results...');
+        logger.info('SessionDetails', 'Loading results for completed session', { sessionId });
+        
         const results = await trainingApi.getSessionResults(sessionId);
+        console.log('[SessionDetails] Results received:', results);
+        logger.info('SessionDetails', 'Results loaded successfully', { 
+          sessionId, 
+          hasSession: 'session' in results,
+          hasResults: results && 'session' in results && results.session.results !== null
+        });
+        
         if ('session' in results) {
           setAnalysisData(results.session.results);
           if (results.session.results?.speech_segments) {
             setTranscriptionData(results.session.results.speech_segments);
           }
+          
+          // debug log the data we set
+          console.log('[SessionDetails] Set analysisData:', results.session.results);
+          console.log('[SessionDetails] Set transcriptionData:', results.session.results?.speech_segments);
+          logger.debug('SessionDetails', 'Data set in state', {
+            sessionId,
+            hasAnalysisData: !!results.session.results,
+            hasTranscriptionData: !!results.session.results?.speech_segments,
+            fillerWordsCount: results.session.results?.pitch_evaluation?.filler_words?.length || 0
+          });
         }
+        
         // set all components as ready
         setComponentState({
           transcriptionReady: true,
@@ -410,11 +447,19 @@ const SessionDetailsComponent: React.FC = () => {
           feedbackError: false
         });
         setIsLoadingInitialData(false);
+        
+        logger.info('SessionDetails', 'Completed session setup finished', { sessionId });
         return; // SSE not needed
       }
       
       // 4. If processing or uploaded - start SSE
       if (['uploaded', 'processing'].includes(initialStatus.status)) {
+        console.log('[SessionDetails] Session in progress, starting SSE...');
+        logger.info('SessionDetails', 'Starting SSE for active session', { 
+          sessionId, 
+          status: initialStatus.status 
+        });
+        
         // set new component loading states to true
         setComponentState(prev => ({
           ...prev,
@@ -422,7 +467,7 @@ const SessionDetailsComponent: React.FC = () => {
           questionsLoading: true,
           feedbackLoading: true
         }));
-        // use startSSE directly to avoid dependency cycle
+        
         // close existing connection if any
         if (eventSourceRef.current) {
           console.log('[SessionDetails] Closing existing SSE connection');
@@ -434,7 +479,11 @@ const SessionDetailsComponent: React.FC = () => {
           return;
         }
         
-        console.log('[SessionDetails] Starting SSE connection');
+        console.log('[SessionDetails] Creating SSE connection to:', `/api/training/session/${sessionId}/events`);
+        logger.info('SessionDetails', 'Creating SSE connection', { 
+          sessionId,
+          url: `/api/training/session/${sessionId}/events`
+        });
         
         const eventSource = trainingApi.createSSEConnection(
           sessionId,
@@ -446,7 +495,8 @@ const SessionDetailsComponent: React.FC = () => {
         
         // handle open event
         eventSource.onopen = () => {
-          console.log('[SessionDetails] SSE connection opened');
+          console.log('[SessionDetails] SSE connection opened successfully');
+          logger.info('SessionDetails', 'SSE connection opened', { sessionId });
         };
       }
       
@@ -487,7 +537,16 @@ const SessionDetailsComponent: React.FC = () => {
     }
     abortControllerRef.current = new AbortController();
 
+    // send HTTP ping to backend to confirm component mounting  
+    fetch(`/api/debug/component-mounted`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ component: 'SessionDetails', sessionId })
+    }).catch(() => {}); // ignore errors
+    
     // start initialization using ref to avoid dependency loop
+    console.log(`[SessionDetails] Starting SSE initialization for session ${sessionId}`);
+    logger.info('SessionDetails', 'useEffect triggered, calling initializeSSE', { sessionId });
     initializeSSERef.current?.();
 
     // cleanup on unmount
@@ -590,42 +649,6 @@ const SessionDetailsComponent: React.FC = () => {
           </div>
         ) : null}
 
-        {/* Analysis components - show when metrics are ready (85% progress) */}
-        {componentState.metricsReady && analysisData && (
-          <>
-            <PaceComponent 
-              paceRate={analysisData.metrics?.pace_rate}
-              paceMark={analysisData.metrics?.pace_mark}
-            />
-            
-            <EnergyComponent 
-              energyMark={analysisData.metrics?.emotion_mark}
-              duration={transcriptionData ? Math.ceil(transcriptionData[transcriptionData.length - 1]?.end / 60) : 12}
-            />
-            
-            <ClarityComponent 
-              unclarityMoments={analysisData.pitch_evaluation?.unclarity_moments}
-              avgSentenceLength={analysisData.metrics?.avg_sentences_len}
-              repeatedWords={analysisData.pitch_evaluation?.filler_words}
-            />
-            
-            <ConfidenceComponent 
-              hesitantPhrases={analysisData.pitch_evaluation?.hesitant_phrases}
-              fillerWords={analysisData.pitch_evaluation?.filler_words}
-              totalWords={transcriptionData ? estimateTotalWords(transcriptionData) : 500}
-            />
-          </>
-        )}
-
-        {/* Pitch Evaluation - show loading, error, or ready state */}
-        {/* <PitchEvaluationComponent 
-          marks={analysisData?.pitch_evaluation?.marks}
-          missing_blocks={analysisData?.pitch_evaluation?.missing_blocks}
-          isLoading={componentState.pitchAnalysisLoading}
-          hasError={componentState.pitchAnalysisError}
-          errorMessage="Сервис анализа питча испытывает нагрузки. Пожалуйста, попробуйте позже."
-        /> */}
-
         {/* Questions - show loading, error, or ready state */}
         <QuestionsComponent 
           questions={analysisData?.questions}
@@ -644,6 +667,47 @@ const SessionDetailsComponent: React.FC = () => {
           hasError={componentState.feedbackError}
           errorMessage="Сервис анализа презентации испытывает нагрузки. Пожалуйста, попробуйте позже."
         />
+
+        {/* Analysis components - show when metrics are ready (85% progress) */}
+        {componentState.metricsReady && analysisData && (
+          <>
+            <PaceComponent 
+              paceRate={analysisData.metrics?.pace_rate}
+              paceMark={analysisData.metrics?.pace_mark}
+            />
+            
+            <EnergyComponent 
+              energyMark={analysisData.metrics?.emotion_mark}
+              duration={transcriptionData ? Math.ceil(transcriptionData[transcriptionData.length - 1]?.end / 60) : 12}
+            />
+          </>
+        )}
+
+        {/* Pitch Evaluation - show loading, error, or ready state */}
+        {/* <PitchEvaluationComponent 
+          marks={analysisData?.pitch_evaluation?.marks}
+          missing_blocks={analysisData?.pitch_evaluation?.missing_blocks}
+          isLoading={componentState.pitchAnalysisLoading}
+          hasError={componentState.pitchAnalysisError}
+          errorMessage="Сервис анализа питча испытывает нагрузки. Пожалуйста, попробуйте позже."
+        /> */}
+
+        {/* Clarity and Confidence components - show when we have analysis data */}
+        {analysisData && (
+          <>
+            <ClarityComponent 
+              unclarityMoments={analysisData.pitch_evaluation?.unclarity_moments}
+              avgSentenceLength={analysisData.metrics?.avg_sentences_len}
+              repeatedWords={analysisData.pitch_evaluation?.filler_words}
+            />
+            
+            <ConfidenceComponent 
+              hesitantPhrases={analysisData.pitch_evaluation?.hesitant_phrases}
+              fillerWords={analysisData.pitch_evaluation?.filler_words}
+              totalWords={transcriptionData ? estimateTotalWords(transcriptionData) : 500}
+            />
+          </>
+        )}
 
       </div>
 

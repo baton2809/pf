@@ -49,7 +49,7 @@ async function start() {
 
     await fastify.register(multipart, {
       limits: {
-        fileSize: 50 * 1024 * 1024 // 50mb limit
+        fileSize: Infinity // no limit for file uploads
       }
     });
 
@@ -122,6 +122,13 @@ async function start() {
     await fastify.register(trainingRoutes, { authService });
     await fastify.register(analyticsRoutes, { prefix: '/api', authService });
     await fastify.register(mlRetryRoutes, { prefix: '/api/ml' });
+
+    // debug endpoint to track component mounting
+    fastify.post('/api/debug/component-mounted', async (request, reply) => {
+      const { component, sessionId } = request.body as { component: string, sessionId: string };
+      logger.info('DEBUG', `Component ${component} mounted`, { component, sessionId });
+      reply.send({ status: 'logged' });
+    });
 
     // start server
     await fastify.listen({ 

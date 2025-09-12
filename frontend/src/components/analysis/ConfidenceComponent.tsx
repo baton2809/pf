@@ -13,6 +13,9 @@ export const ConfidenceComponent: React.FC<ConfidenceComponentProps> = ({
 }) => {
   const getFillerWordsData = (): Array<{word: string, count: number, percentage: number}> => {
     if (fillerWords && fillerWords.length > 0) {
+      // log for debugging what data we receive
+      console.log('[ConfidenceComponent] Filler words data:', fillerWords);
+      
       return fillerWords.slice(0, 3).map(item => {
         // Handle both old format {word: string, count: number} and new format (strings)
         if (typeof item === 'string') {
@@ -51,26 +54,35 @@ export const ConfidenceComponent: React.FC<ConfidenceComponentProps> = ({
   };
 
   const getConfidenceLevel = (): { level: string; color: string; description: string } => {
-    const hasMany = hesitantPhrasesData.length > 3 || totalFillerPercentage > 7;
-    const hasSome = hesitantPhrasesData.length > 1 || totalFillerPercentage > 3;
+    // improved logic for confidence calculation
+    // consider both filler words and hesitant phrases
+    const hasSignificantFillers = totalFillerPercentage > 5; // more than 5% is significant
+    const hasModerateFillers = totalFillerPercentage > 2; // 2-5% is moderate
+    const hasManyHesitantPhrases = hesitantPhrasesData.length > 3;
+    const hasSomeHesitantPhrases = hesitantPhrasesData.length > 1;
     
-    if (!hasMany && !hasSome) {
+    // high confidence: low fillers AND few hesitant phrases
+    if (!hasModerateFillers && !hasSomeHesitantPhrases) {
       return {
         level: "Высокая",
         color: "#22c55e",
         description: "Речь звучит уверенно и убедительно"
       };
-    } else if (!hasMany) {
-      return {
-        level: "Средняя",
-        color: "#f59e0b",
-        description: "Есть некоторые моменты неуверенности"
-      };
-    } else {
+    }
+    // low confidence: significant fillers OR many hesitant phrases
+    else if (hasSignificantFillers || hasManyHesitantPhrases) {
       return {
         level: "Низкая",
         color: "#ef4444",
         description: "Заметны частые проявления неуверенности"
+      };
+    }
+    // medium confidence: moderate issues
+    else {
+      return {
+        level: "Средняя",
+        color: "#f59e0b",
+        description: "Есть некоторые моменты неуверенности"
       };
     }
   };

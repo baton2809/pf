@@ -122,7 +122,7 @@ export const Settings: React.FC = () => {
               Статус подключения
             </div>
             <div style={{ fontSize: '12px', color: isBackendAvailable ? '#0369a1' : '#dc2626' }}>
-              {isBackendAvailable ? '✓ Подключено к серверу' : '⚠ Отсутствует подключение к серверу'}
+              {isBackendAvailable ? '✓ Подключено' : '⚠ Отсутствует подключение к серверу'}
             </div>
           </div>
         </div>
@@ -222,7 +222,7 @@ export const Settings: React.FC = () => {
             <p>PitchForge v1.0.0</p>
             <p>Платформа для тренировки презентационных навыков с использованием AI</p>
             <p style={{ marginTop: '8px' }}>
-              © 2024 PitchForge. Все права защищены.
+              © 2025 PitchForge. Все права защищены.
             </p>
           </div>
         </div>

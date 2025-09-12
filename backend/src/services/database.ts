@@ -760,6 +760,18 @@ class Database {
             if (op.result_data.pitch_evaluation) {
               result.pitch_evaluation = op.result_data.pitch_evaluation;
             }
+            if (op.result_data.filler_words) {
+              result.pitch_evaluation = result.pitch_evaluation || {};
+              result.pitch_evaluation.filler_words = op.result_data.filler_words;
+            }
+            if (op.result_data.hesitant_phrases) {
+              result.pitch_evaluation = result.pitch_evaluation || {};
+              result.pitch_evaluation.hesitant_phrases = op.result_data.hesitant_phrases;
+            }
+            if (op.result_data.unclarity_moments) {
+              result.pitch_evaluation = result.pitch_evaluation || {};
+              result.pitch_evaluation.unclarity_moments = op.result_data.unclarity_moments;
+            }
             if (op.result_data.advices) {
               result.advices = op.result_data.advices;
             }

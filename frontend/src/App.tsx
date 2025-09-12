@@ -3,7 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LoginScreen } from './components/LoginScreen';
 import AuthCallback from './pages/AuthCallback';
-import { SideMenu } from './components/SideMenu';
+import { AppLayout } from './components/AppLayout';
 import { NewTrainingPage } from './pages/NewTrainingPage';
 import { RecordingInterface } from './components/RecordingInterface';
 import { History } from './pages/History';
@@ -41,33 +41,74 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 
 // main app content
 const AppContent: React.FC = () => {
-  const { isAuthenticated } = useAuth();
-
   return (
     <Router>
       <Routes>
-        {/* AuthCallback must be BEFORE ProtectedRoute to avoid being caught by /* */}
+        {/* public routes */}
         <Route path="/auth/callback" element={<AuthCallback />} />
         
-        {/* protected routes */}
-        <Route path="/*" element={
+        {/* protected routes with AppLayout */}
+        <Route path="/" element={
           <ProtectedRoute>
-            <div className="app-container">
-              {isAuthenticated && <SideMenu />}
-              <div className="main-content">
-                <Routes>
-                  <Route path="/" element={<Navigate to="/new-training" replace />} />
-                  <Route path="/new-training" element={<NewTrainingPage />} />
-                  <Route path="/training/:trainingId/record" element={<RecordingInterface />} />
-                  <Route path="/history" element={<History />} />
-                  <Route path="/session/:sessionId" element={<SessionDetails />} />
-                  <Route path="/sessions/:sessionId" element={<SessionDetails />} />
-                  <Route path="/analytics" element={<Analytics />} />
-                  <Route path="/leaderboard" element={<Leaderboard />} />
-                  <Route path="/settings" element={<Settings />} />
-                </Routes>
-              </div>
-            </div>
+            <AppLayout>
+              <Navigate to="/new-training" replace />
+            </AppLayout>
+          </ProtectedRoute>
+        } />
+        <Route path="/new-training" element={
+          <ProtectedRoute>
+            <AppLayout>
+              <NewTrainingPage />
+            </AppLayout>
+          </ProtectedRoute>
+        } />
+        <Route path="/training/:trainingId/record" element={
+          <ProtectedRoute>
+            <AppLayout>
+              <RecordingInterface />
+            </AppLayout>
+          </ProtectedRoute>
+        } />
+        <Route path="/history" element={
+          <ProtectedRoute>
+            <AppLayout>
+              <History />
+            </AppLayout>
+          </ProtectedRoute>
+        } />
+        <Route path="/session/:sessionId" element={
+          <ProtectedRoute>
+            <AppLayout>
+              <SessionDetails />
+            </AppLayout>
+          </ProtectedRoute>
+        } />
+        <Route path="/sessions/:sessionId" element={
+          <ProtectedRoute>
+            <AppLayout>
+              <SessionDetails />
+            </AppLayout>
+          </ProtectedRoute>
+        } />
+        <Route path="/analytics" element={
+          <ProtectedRoute>
+            <AppLayout>
+              <Analytics />
+            </AppLayout>
+          </ProtectedRoute>
+        } />
+        <Route path="/leaderboard" element={
+          <ProtectedRoute>
+            <AppLayout>
+              <Leaderboard />
+            </AppLayout>
+          </ProtectedRoute>
+        } />
+        <Route path="/settings" element={
+          <ProtectedRoute>
+            <AppLayout>
+              <Settings />
+            </AppLayout>
           </ProtectedRoute>
         } />
       </Routes>
