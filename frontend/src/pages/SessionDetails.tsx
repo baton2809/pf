@@ -12,7 +12,7 @@ import { ConfidenceComponent } from '../components/analysis/ConfidenceComponent'
 import { FinalScoreComponent } from '../components/analysis/FinalScoreComponent';
 import { PresentationFeedbackComponent } from '../components/analysis/PresentationFeedbackComponent';
 import { QuestionsComponent } from '../components/analysis/QuestionsComponent';
-import { PitchEvaluationComponent } from '../components/analysis/PitchEvaluationComponent';
+// import { PitchEvaluationComponent } from '../components/analysis/PitchEvaluationComponent';
 
 // utility functions
 import { 
@@ -618,13 +618,13 @@ const SessionDetailsComponent: React.FC = () => {
         )}
 
         {/* Pitch Evaluation - show loading, error, or ready state */}
-        <PitchEvaluationComponent 
+        {/* <PitchEvaluationComponent 
           marks={analysisData?.pitch_evaluation?.marks}
           missing_blocks={analysisData?.pitch_evaluation?.missing_blocks}
           isLoading={componentState.pitchAnalysisLoading}
           hasError={componentState.pitchAnalysisError}
           errorMessage="Сервис анализа питча испытывает нагрузки. Пожалуйста, попробуйте позже."
-        />
+        /> */}
 
         {/* Questions - show loading, error, or ready state */}
         <QuestionsComponent 

@@ -41,7 +41,7 @@ const AuthCallback: React.FC = () => {
     };
 
     processCallback();
-  }, [handleAuthCallback]);
+  }, [handleAuthCallback, navigate]);
 
   return (
     <div className="auth-callback">
